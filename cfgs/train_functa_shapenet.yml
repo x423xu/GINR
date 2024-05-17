@@ -1,0 +1,9 @@
+num_layers: 4
+dataset: shapenet
+pos_emb: ffm
+ffm_map_scale: 16
+ffm_map_size: 256
+hidden_dim: 512
+act_type: sine
+dropout: false
+cache_latents: false
