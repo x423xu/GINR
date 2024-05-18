@@ -5,8 +5,7 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 import torch_geometric
-from torchmeta.modules import (MetaModule, MetaSequential)
-from .modules import BatchLinear
+from .modules import MetaSequential, BatchLinear
 import itertools
 
 ### Taken from official SIREN repo
