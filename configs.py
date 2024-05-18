@@ -15,6 +15,9 @@ parser.add_argument('--num_workers', type=int, default=4)
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--batch_size', type=int, default=8)
 parser.add_argument('--eval', action='store_true', default=False)
+parser.add_argument('--lr_outer', type=float, default=0.0001, help='learning rate')
+parser.add_argument('--inner_steps', type=int, default=3, help='number of inner steps for each coords')
+parser.add_argument('--lr_inner', type=float, default=1e-4, help='learning rate for inner loop')
 
 # ddp training params
 parser.add_argument('--ddp', action='store_true', default=False)

@@ -1,7 +1,0 @@
-width: 64
-depth: 4
-w0: 50
-hidden_features: 512
-k_mixtures: 256
-use_meta_sgd: True
-outermost_linear: True
