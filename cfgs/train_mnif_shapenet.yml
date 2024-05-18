@@ -15,4 +15,3 @@ use_latent_embedding: True
 std_latent: 0.0001
 mixture_type: layerwise
 norm_latents: False
-vae: True

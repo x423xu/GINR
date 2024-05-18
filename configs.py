@@ -18,6 +18,8 @@ parser.add_argument('--eval', action='store_true', default=False)
 parser.add_argument('--lr_outer', type=float, default=0.0001, help='learning rate')
 parser.add_argument('--inner_steps', type=int, default=3, help='number of inner steps for each coords')
 parser.add_argument('--lr_inner', type=float, default=1e-4, help='learning rate for inner loop')
+parser.add_argument('--enable_vae', action='store_true', default=False, help = 'whether to use vae in the training')
+parser.add_argument('--cache_latents', action='store_true', default=False, help = 'training with cached latents')
 
 # ddp training params
 parser.add_argument('--ddp', action='store_true', default=False)
@@ -41,6 +43,9 @@ parser.add_argument('--save_every_n_steps', type=int, default=100)
 
 args = parser.parse_args()
 
+'''
+read the config file, the configs are overidden by the argparser
+'''
 with open(args.config, 'r') as file:
     config =  yaml.safe_load(file)
 for key, value in config.items():
