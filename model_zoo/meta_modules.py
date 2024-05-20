@@ -71,7 +71,7 @@ class ModulatedSirenLayer(nn.Module):
                  is_last: bool = False,
                  modulate_scale: bool = True,
                  modulate_shift: bool = True,
-                 apply_activation: bool = True):
+                 apply_activation: bool = True,):
         """Constructor.
 
         Args:
@@ -331,7 +331,10 @@ class LatentModulatedSiren(nn.Module):
                 latent_init_scale: float = 0.01,
                 use_meta_sgd: bool = False,
                 meta_sgd_init_range: Tuple[float, float] = (0.005, 0.1),
-                meta_sgd_clip_range: Tuple[float, float] = (0., 1.)):
+                meta_sgd_clip_range: Tuple[float, float] = (0., 1.),
+                ffm_map_scale = 16,
+                ffm_map_size = 1024,
+                norm_latents = False):
         """Constructor.
 
         Args:
@@ -386,7 +389,7 @@ class LatentModulatedSiren(nn.Module):
             modulate_scale=modulate_scale,
             modulate_shift=modulate_shift)
 
-        modsiren = [ModulatedSirenLayer(f_in=self.in_channels,
+        modsiren = [ModulatedSirenLayer(ffm_map_size,
                                         f_out=self.width,
                                         is_first=True,
                                         w0=self.w0,
@@ -409,6 +412,11 @@ class LatentModulatedSiren(nn.Module):
                                             modulate_shift=False))
         
         self.modsiren = nn.ModuleList(modsiren)
+        # positional encoding
+        self.map = FourierFeatMapping(self.in_channels,
+                map_scale=ffm_map_scale,
+                map_size=ffm_map_size,
+            )
 
     def shared_parameters(self):
         return itertools.chain(self.modsiren.parameters(), self.latent_to_modulation.parameters())
@@ -470,7 +478,7 @@ class LatentModulatedSiren(nn.Module):
         # else:
         #     x = coords
 
-        x = coords
+        x = self.map(coords)
         #print('len(self.modsiren)', len(self.modsiren), self.depth-1)
         # Hidden layers
         for i in range(0, self.depth-1):
@@ -502,26 +510,26 @@ class LinearMixtureINR(nn.Module):
     """K mixture of INR model"""
 
     def __init__(self,
-                 width: int = 32,
-                 depth: int = 4,
-                 in_channels: int = 2,
-                 out_channels: int = 3,
-                 image_resolution: int = 64,
-                 w0: float = 30.,                 
-                 k_mixtures: int = 128,
-                 mixture_type: str = 'all-layer',
-                 embedding_type: str = 'none',
-                 pred_type: str = 'image',
-                 outermost_linear: bool = None,
-                 use_latent_embedding: bool = False,
-                 std_latent: float = 0.0,
-                 latent_channels: int = 256,
-                 latent_init_scale: Tuple[float, float] = (1.0 - 0.05, 1.0 + 0.05),
-                 use_meta_sgd: bool = False,
-                 meta_sgd_init_range: Tuple[float, float] = (0.005, 0.1),
-                 meta_sgd_clip_range: Tuple[float, float] = (0., 1.),
-                 init_path: str = '',
-                 ffm_map_scale = 16,
+                width: int = 32,
+                depth: int = 4,
+                in_channels: int = 2,
+                out_channels: int = 3,
+                image_resolution: int = 64,
+                w0: float = 30.,                 
+                k_mixtures: int = 128,
+                mixture_type: str = 'all-layer',
+                embedding_type: str = 'none',
+                pred_type: str = 'image',
+                outermost_linear: bool = None,
+                use_latent_embedding: bool = False,
+                std_latent: float = 0.0,
+                latent_channels: int = 256,
+                latent_init_scale: Tuple[float, float] = (1.0 - 0.05, 1.0 + 0.05),
+                use_meta_sgd: bool = False,
+                meta_sgd_init_range: Tuple[float, float] = (0.005, 0.1),
+                meta_sgd_clip_range: Tuple[float, float] = (0., 1.),
+                init_path: str = '',
+                ffm_map_scale = 16,
                 ffm_map_size = 1024,
                 norm_latents = False
                 ):

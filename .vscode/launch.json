@@ -11,10 +11,13 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "--wandb",
+                // "--wandb",
                 "--config",
                 // "cfgs/train_loe_shapenet.yml"
-                "cfgs/train_mnif_shapenet.yml"
+                // "cfgs/train_mnif_shapenet.yml"
+                "cfgs/train_functa_shapenet.yml",
+                "--logdir",
+                "logs_tmp",
             ]
         }
     ]

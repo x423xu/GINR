@@ -1,14 +1,18 @@
-num_layers: 4
 dataset: shapenet
 pos_emb: ffm
 ffm_map_scale: 16
 ffm_map_size: 256
-hidden_dim: 512
+hidden_features: 512
 act_type: sine
-dropout: false
+w0: 30.0
+
 cache_latents: false
 model_type: functa
 in_channels: 3
 out_channels: 1
 pred_type: voxel
 use_meta_sgd: True
+sampling: null
+width: 64
+depth: 4
+cache_latents: false
