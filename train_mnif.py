@@ -21,9 +21,10 @@ def get_data(args):
     dataset = ShapeNetGEM(split=args.split,
                        sampling=args.sampling,
                        random_scale=args.random_scale,
-                       dataset_root=args.dataset_root)
+                       dataset_root=args.dataset_root,
+                       shuffle=not args.eval and args.cache_latents,) # we shuffle only once if cache latents
     dataloader = DataLoader(dataset,
-                        shuffle=not args.eval,
+                        shuffle=not args.eval and not args.cache_latents,
                         batch_size=args.batch_size,
                         pin_memory=True,
                         num_workers=args.num_workers)
@@ -44,8 +45,19 @@ def train(args):
         - imgs
     '''
     logger, log_dir, ckpt_path, img_path, tm_str = make_log(args)
+    if args.cache_latents:
+        cache_path = os.path.join(log_dir, 'cache')
+        os.makedirs(cache_path, exist_ok=True)
     if args.wandb:
-        wandb.init(entity='xxy', project='ginr', dir=args.log_dir, config = args)
+        # set wandb tags and descriptions
+        tags = []
+        tags.append(args.model_type)
+        descriptions = f'This is a training record of **{args.model_type}**. '
+        if args.vae is not None:
+            descriptions += f'The vae **{args.vae}** is enabled. '
+        if args.cache_latents:
+            descriptions += 'The latents are **cached**. '
+        wandb.init(entity='xxy', project='ginr', dir=args.log_dir, config = args, tags=tags, description=descriptions)
         wandb.run.name = tm_str
 
     train_loader = get_data(args)
@@ -109,7 +121,18 @@ def train(args):
             batch_size = gt['img'].size(0)
 
             meta_grad = copy.deepcopy(meta_grad_init)
-            context_params = model.get_context_params(batch_size, args.eval)
+
+
+            '''
+            We use the cached latents if the cache_latents is True. In the first epoch, we will not use the cached latents.
+            Another point: if the cache_latents is True, the training data cannot be shuffled.
+            '''
+            if args.cache_latents and os.path.exists(os.path.join(cache_path, f'd{step}.pt')):
+                rand_params = torch.load(os.path.join(cache_path, f'd{step}.pt'), map_location='cpu').cuda()
+                context_params = rand_params.detach()
+                context_params.requires_grad_()
+            else:
+                context_params = model.get_context_params(batch_size, args.eval)
             if args.use_meta_sgd:
                 meta_sgd_inner = model.meta_sgd_lrs()
             
@@ -124,6 +147,12 @@ def train(args):
                     context_params = context_params - args.lr_inner * (meta_sgd_inner * grad_inner)
                 else:
                     context_params = context_params - args.lr_inner * grad_inner
+            '''
+            We cache the latents after it is updated.
+            '''
+            if args.cache_latents:
+                torch.save(context_params.detach().cpu(), os.path.join(cache_path, f'd{step}.pt'))
+            
             model_output = model(model_input, context_params)
             losses = image_mse(None, model_output, gt)
             train_loss = 0.
@@ -131,7 +160,7 @@ def train(args):
                 single_loss = loss.mean()
                 train_loss += single_loss.cpu()
             all_losses += float(train_loss) * batch_size
-            # PSNR
+            # PSNR for (latents step)
             for pred_img, gt_img in zip(model_output['model_out'].cpu(), gt['img'].cpu()):
                 if args.pred_type == 'voxel':
                     psnr = compute_psnr(pred_img * 0.5 + 0.5, gt_img * 0.5 + 0.5) # rescale from [-1, 1] to [0, 1]
@@ -139,15 +168,18 @@ def train(args):
                 all_psnr += psnr
                 steps += 1
 
-            # voxel accuracy
+            # voxel accuracy for (latents step)
             if args.pred_type == 'voxel':
                 pred_voxel = model_output['model_out'] >= 0.0 # [non-exist (-1), exists (+1)]
                 gt_voxel = gt['img'] >= 0.0
                 acc = (pred_voxel == gt_voxel).float().mean()
                 all_acc += float(acc) * batch_size
 
-            global_steps += 1
             
+            # model params update step
+            '''
+            Here the latents are the updated ones, and it is the same as the cached ones.
+            '''
             losses_all = losses['img_loss']
             task_grad = torch.autograd.grad(losses_all, model.get_parameters())
             for g in range(len(task_grad)):
@@ -158,7 +190,16 @@ def train(args):
             torch.nn.utils.clip_grad_norm_(model.get_parameters(), max_norm=1.)
             optim.step()
 
+            # vae step
+            '''
+            if we set vae to not None, we will train the vae to generate the latents.
+            '''
+            if args.vae is not None:
+                pass
 
+            global_steps += 1
+
+            # log step
             if step % args.log_every_n_steps == 0:
                 description = f'[e{epoch} s{step}/{len(train_loader)}], mse_loss:{all_losses/steps:.4f} PSNR:{all_psnr/steps:.2f} Ctx-mean:{float(context_params.mean()):.8f}'
                 logger.info(description)

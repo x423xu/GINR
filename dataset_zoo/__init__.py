@@ -7,15 +7,17 @@ import random
 # ShapeNet DataLoader is modified from the original code
 # https://github.com/yilundu/gem/blob/2778026ac4508f44c7af160e4e157c6fb039f4ce/dataio.py#L718
 class ShapeNetGEM(Dataset):
-    def __init__(self, split='train', sampling=None, dataset_root='datasets', simple_output=False, random_scale=False):
+    def __init__(self, split='train', sampling=None, dataset_root='datasets', simple_output=False, random_scale=False, shuffle = False):
         self.dataset_root = dataset_root
         self.sampling = sampling
         self.init_model_bool = False
         self.split = split
         self.simple_output = simple_output
         self.random_scale = random_scale
+        self.shuffle = shuffle
         self.init_model()
         self.data_type = 'voxel'
+        
 
     def __len__(self):
         if self.split == "train":
@@ -31,6 +33,10 @@ class ShapeNetGEM(Dataset):
 
         self.data_points_int = torch.load(points_path).byte()
         self.data_values = torch.load(values_path).byte()
+        if self.shuffle:
+            idx = np.random.permutation(len(self.data_points_int))
+            self.data_points_int = self.data_points_int[idx]
+            self.data_values = self.data_values[idx]
     
     def __getitem__(self, idx):
         points = (self.data_points_int[idx].float() + 1) / 128 - 1

@@ -18,7 +18,6 @@ parser.add_argument('--eval', action='store_true', default=False)
 parser.add_argument('--lr_outer', type=float, default=0.0001, help='learning rate')
 parser.add_argument('--inner_steps', type=int, default=3, help='number of inner steps for each coords')
 parser.add_argument('--lr_inner', type=float, default=1e-4, help='learning rate for inner loop')
-parser.add_argument('--enable_vae', action='store_true', default=False, help = 'whether to use vae in the training')
 parser.add_argument('--cache_latents', action='store_true', default=False, help = 'training with cached latents')
 
 # ddp training params
@@ -41,13 +40,28 @@ parser.add_argument('--log_every_n_steps', type=int, default=10)
 parser.add_argument('--ckpt_every_n_epochs', type=int, default=1)
 parser.add_argument('--save_every_n_steps', type=int, default=100)
 
+# vae params
+parser.add_argument('--vae', type=str, default=None, choices=[None, 'simple_vae', 'hierarchical_vae', 'layer_vae'], help = 'Which vae to use')
+parser.add_argument('--warmup_epochs', type=int, default=1, help='warmup epochs for annealing kl loss')
+parser.add_argument('--annealing_every', type=int, default=2, help='annealing kl loss every n epochs')
+parser.add_argument('--kl_r_max', type=float, default=1e-5, help='maximum kl loss weight')
 args = parser.parse_args()
 
 '''
-read the config file, the configs are overidden by the argparser
+Read the config file, merge the config into the args. !!! DO NOT OVERIDE THE DEFAULT ARGS !!!
 '''
 with open(args.config, 'r') as file:
     config =  yaml.safe_load(file)
 for key, value in config.items():
     if getattr(args, key, None) == parser.get_default(key):
         setattr(args, key, value)
+
+'''
+If vae is not None, merge the vae configs into the args. !!! DO NOT OVERIDE THE DEFAULT ARGS !!!
+'''
+if args.vae is not None:
+    with open(f'cfgs/{args.vae}.yml', 'r') as file:
+        vae_config =  yaml.safe_load(file)
+    for key, value in vae_config.items():
+        if getattr(args, key, None) == parser.get_default(key):
+            setattr(args, key, value)

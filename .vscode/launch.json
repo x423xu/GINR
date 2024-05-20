@@ -16,8 +16,9 @@
                 // "cfgs/train_loe_shapenet.yml"
                 // "cfgs/train_mnif_shapenet.yml"
                 "cfgs/train_functa_shapenet.yml",
-                "--logdir",
+                "--log_dir",
                 "logs_tmp",
+                "--cache_latents"
             ]
         }
     ]
