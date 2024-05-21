@@ -18,9 +18,9 @@
                 // "cfgs/train_functa_shapenet.yml",
                 "--log_dir",
                 "logs_tmp",
-                // "--cache_latents",
-                // "--vae",
-                // "hierarchical_vae",
+                "--cache_latents",
+                "--vae",
+                "hierarchical_vae",
                 // "layer_vae",
             ]
         }

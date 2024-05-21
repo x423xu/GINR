@@ -279,7 +279,7 @@ class VAEBackbone(nn.Module):
             nn.Linear(latent_channel, input_channel, bias=True),
         )
         if sample_decoder:
-            self.dist_embedding = ZCombiner(latent_dim, 2*latent_dim) # should align with the siren latents' length
+            self.dist_embedding = ZCombiner(latent_dim, 2*latent_dim) # should align with the inr latents' length
     
     def get_maximal_factor_pair(self,number):
         for i in range(1, int(number**0.5) + 1):
