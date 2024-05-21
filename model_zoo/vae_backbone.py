@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from einops import rearrange, repeat
+from einops.layers.torch import Rearrange
 
 '''
 For vae_backbone, we need to specify:
@@ -27,7 +28,7 @@ class EncCombinerCell(nn.Module):
     def __init__(self, Cin2, Cout):
         super(EncCombinerCell, self).__init__()
         # Cin = Cin1 + Cin2
-        self.conv = nn.Conv1d(Cin2, Cout, kernel_size=1, stride=1, padding=0, bias=True)
+        self.conv = nn.Linear(Cin2, Cout, bias=True)
 
     def forward(self, x1, x2):
         x2 = self.conv(x2)
@@ -38,10 +39,10 @@ class EncCombinerCell(nn.Module):
 class DecCombinerCell(nn.Module):
     def __init__(self, Cin1, Cin2, Cout):
         super(DecCombinerCell, self).__init__()
-        self.conv = nn.Conv1d(Cin2+Cin1, Cout, kernel_size=1, stride=1, padding=0, bias=True)
+        self.conv = nn.Linear(Cin2+Cin1, Cout, bias=True)
 
     def forward(self, x1, x2):
-        out = torch.cat([x1, x2], dim=1)
+        out = torch.cat([x1, x2], dim=2)
         out = self.conv(out)
         return out
 
@@ -109,7 +110,7 @@ class FeedForward(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, dim),
-            nn.Dropout(dropout)
+            nn.Dropout(dropout),
         )
 
     def forward(self, x):
@@ -160,21 +161,23 @@ Input args:
     mlp_dim: the length of output latents, e.g. 1024
 '''  
 class AttnCell(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, out_dim,dropout = 0.):
         super().__init__()
-        self.norm = nn.LayerNorm(dim)
+        self.norm = nn.LayerNorm(out_dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
                 Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
                 FeedForward(dim, mlp_dim, dropout = dropout)
             ]))
+        self.to_out = nn.Linear(dim, out_dim)
 
     def forward(self, x):
         for attn, ff in self.layers:
             x = attn(x) + x
             x = ff(x) + x
 
+        x = self.to_out(x)
         return self.norm(x)
 
 #--------------------Main classes--------------------#
@@ -185,14 +188,15 @@ VAE BACKBONE:
 class VAEBackbone(nn.Module):
     def __init__(self,
                  input_channel = 1, 
-                 output_channel = 64,  
+                 latent_channel = 64,  
                  layers = [2,2,2,2], 
                  sampler_dim = 40, 
                  prior_scale = 1e-4, 
                  num_heads = 8,
                  dim_head = 64,
                  dropout = 0.25,
-                 sample_decoder = False):
+                 sample_decoder = False,
+                 latent_dim = 1024):
         super(VAEBackbone, self).__init__()
         
         num_layers = len(layers) # How many layers for encoder/decoder tower
@@ -220,15 +224,15 @@ class VAEBackbone(nn.Module):
         '''
         for n in range(num_layers):
             if n==0: # first layer of encoder, channels from 64 to 64
-                Cin = output_channel
-                Cout = output_channel
+                Cin = latent_channel
+                Cout = latent_channel
             else:
-                Cin = output_channel*(np.power(2, min(n, 3)-1)) 
-                Cout = output_channel*(np.power(2, min(n, 2)))
-            self.encoder_tower.append(AttnCell(dim=Cin, depth = int(layers[n]), heads = num_heads, dim_head = dim_head, mlp_dim = Cout, dropout=dropout)) 
+                Cin = latent_channel*(np.power(2, min(n, 3)-1)) 
+                Cout = latent_channel*(np.power(2, min(n, 2)))
+            self.encoder_tower.append(AttnCell(dim=Cin, depth = int(layers[n]), heads = num_heads, dim_head = dim_head, mlp_dim = Cin,out_dim=Cout, dropout=dropout)) 
             self.enc_combiners.append(EncCombinerCell(Cout, Cout))
             self.enc_sampler.append(
-                nn.Sequential(nn.Conv1d(Cout, sampler_dim, kernel_size=1, stride=1, padding=0, bias=True)))
+                nn.Sequential(nn.Linear(Cout, sampler_dim,bias=True)))
         
         # get decoder tower
         '''
@@ -240,61 +244,74 @@ class VAEBackbone(nn.Module):
         '''
         for n in range(num_layers):
             if n==num_layers-1: # last layer of decoder, channels from 64 to 64
-                Cin = output_channel
-                Cout = output_channel
+                Cin = latent_channel
+                Cout = latent_channel
             else:
-                Cin = output_channel*(2**(min(num_layers-n-1, 2)))
-                Cout = output_channel*(2**(min(num_layers-n-2, 2)))
-            self.decoder_tower.append(AttnCell(dim=Cin, depth = int(layers[n]), heads = num_heads, dim_head = dim_head, mlp_dim = Cout, dropout=dropout))
+                Cin = latent_channel*(2**(min(num_layers-n-1, 2)))
+                Cout = latent_channel*(2**(min(num_layers-n-2, 2)))
+            self.decoder_tower.append(AttnCell(dim=Cin, depth = int(layers[n]), heads = num_heads, dim_head = dim_head, mlp_dim = Cin,out_dim=Cout, dropout=dropout))
             self.dec_combiners.append(DecCombinerCell(sampler_dim//2, Cin, Cin))
             if n<num_layers-1: # As the NVAE, the number of decoder equals the number of encoder minus 1
-                self.dec_sampler.append(nn.Sequential(nn.Conv1d(Cout, sampler_dim, kernel_size=1, stride=1, padding=0, bias=True)))
+                self.dec_sampler.append(nn.Sequential(nn.Linear(Cout, sampler_dim, bias=True)))
         
         self.enc_0 = nn.Sequential(
             nn.ELU(),
-            nn.Conv1d(in_channels=output_channel*(2**num_layers), out_channels=output_channel*(2**num_layers), kernel_size=1, stride=1, padding=0, bias=True),
-            nn.ELU(),
+            nn.Linear(in_features=latent_channel*(2**num_layers), out_features=latent_channel*(2**num_layers)),
         )
 
-        # to generate prior z_1
-        prior_ftr0_size = ((2**(min(num_layers-1, 2)))*output_channel, 1024) # should align with the siren latents' length
-        self.prior_ftr0 = nn.Parameter(torch.rand(size=prior_ftr0_size), requires_grad=True)
-        self.pre_processor = nn.Sequential(
-            nn.Conv1d(in_channels=input_channel, out_channels=output_channel, kernel_size=1, stride=1, padding=0, bias=True),
+        '''
+        For a tensor with shape (b,c,l), we firstly reshape to (b, c, l1, l2)
+        '''
+        ldmp = self.get_maximal_factor_pair(latent_dim)
+        lcmp = self.get_maximal_factor_pair(latent_channel)
+        self.pre_processor = nn.Sequential(     
+            nn.Conv1d(in_channels=input_channel, out_channels=latent_channel, kernel_size=1, stride=1, padding=0, bias=True),
+            Rearrange('b (l1 l2) (l3 l4) -> b (l1 l3) (l2 l4)', l1 = lcmp[0], l2 = lcmp[1], l3 = ldmp[0], l4 = ldmp[1]),
+            nn.Conv1d(in_channels=lcmp[0]*ldmp[0], out_channels=latent_channel, kernel_size=1, stride=1, padding=0, bias=True),
+            Rearrange('b c l -> b l c', c = latent_channel)
         )
+        # to generate prior z_1
+        prior_ftr0_size = (lcmp[1]*ldmp[1],(2**(min(num_layers-1, 2)))*latent_channel) # should align with the siren latents' length
+        self.prior_ftr0 = nn.Parameter(torch.rand(size=prior_ftr0_size), requires_grad=True)
         self.post_processor = nn.Sequential(
-            nn.Conv1d(in_channels=output_channel, out_channels=output_channel, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.Conv1d(lcmp[1]*ldmp[1], latent_dim, kernel_size=1, padding=0, stride=1, bias=True),
             nn.ELU(),
-            nn.Conv1d(in_channels=output_channel, out_channels=input_channel, kernel_size=1, stride=1, padding=0, bias=True),
+            nn.Linear(latent_channel, input_channel, bias=True),
         )
         if sample_decoder:
-            self.dist_embedding = ZCombiner(1024, 2048) # should align with the siren latents' length
+            self.dist_embedding = ZCombiner(latent_dim, 2*latent_dim) # should align with the siren latents' length
     
+    def get_maximal_factor_pair(self,number):
+        for i in range(1, int(number**0.5) + 1):
+            if number % i == 0:
+                factor_pair = (i, number // i)
+                max_factor_pair = factor_pair
+        return max_factor_pair
     def forward(self, z_in, return_meta = False):
         # s1. we want to get posterior zn,...,z2,z1,z0 -> z0,z1,z2,...,zn
         z_n = self.pre_processor(z_in)
         z_posterior = []
         z_enc_combiners = []
         for n in range(self.num_layers):
-            z_n = self.encoder_tower[n](z_n) # (b, 64->64->128->256, L)
+            z_n = self.encoder_tower[n](z_n) # (b, L, 64->64->128->256)
             z_posterior.append(z_n)
             z_enc_combiners.append(self.enc_combiners[n])
         z_posterior.reverse()
         z_enc_combiners.reverse()
 
         # s2. get the first posterior
-        param_0 = self.enc_0[0](z_posterior[0]) # q_0 (b, 256, 1024)
-        param_0 = self.enc_sampler[self.num_layers-1](param_0) # q_0 (b, 40, 1024)
-        mu_q, log_sigma_q = torch.chunk(param_0, 2, dim=1) # mu_q, log_sigma_q (b, 20, 1024)
+        param_0 = self.enc_0[0](z_posterior[0]) # q_0 (b, L, 256)
+        param_0 = self.enc_sampler[self.num_layers-1](param_0) # q_0 (b, L, 40)
+        mu_q, log_sigma_q = torch.chunk(param_0, 2, dim=2) # mu_q, log_sigma_q (b, L,20)
         dist = Normal(mu_q, log_sigma_q)
-        z,_ = dist.sample() # z (b, 20, 1024)
-        log_q = dist.log_p(z) # (b, 20, 1024)
+        z,_ = dist.sample() # z (b, L, 20)
+        log_q = dist.log_p(z) # (b, L, 20)
         all_q = [dist]
         all_log_q = [log_q]
 
         # s3. get the first prior
         dist = Normal(torch.zeros_like(mu_q), torch.ones_like(log_sigma_q)+torch.log(torch.tensor(self.prior_scale,device = mu_q.device)))
-        log_p= dist.log_p(z) # (b, 20, 1024)
+        log_p= dist.log_p(z) # (b, L, 20)
         all_p = [dist]
         all_log_p = [log_p]
 
@@ -312,12 +329,12 @@ class VAEBackbone(nn.Module):
         for n in range(1,self.num_layers):     
             # a1. get prior
             param = self.dec_sampler[n-1](s)
-            mu_p, log_sigma_p = torch.chunk(param, 2, dim=1)
+            mu_p, log_sigma_p = torch.chunk(param, 2, dim=2)
 
             # a2. get posterior
             ftr = z_enc_combiners[n](z_posterior[n], s)
             param = self.enc_sampler[self.num_layers-n-1](ftr)
-            mu_q, log_sigma_q = torch.chunk(param, 2, dim=1)
+            mu_q, log_sigma_q = torch.chunk(param, 2, dim=2)
             dist_q = Normal(mu_p + mu_q, log_sigma_p + log_sigma_q)
             # dist_q = Normal(mu_q, log_sigma_q)
             z, _ = dist_q.sample()

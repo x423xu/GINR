@@ -8,6 +8,7 @@ import numpy as np
 import open3d as o3d
 # from mpl_toolkits.mplot3d import Axes3D
 import matplotlib
+import wandb
 matplotlib.use('Agg')
 
 def get_pts(pcd):
@@ -106,3 +107,52 @@ def make_log(args):
     logger.addHandler(f_handler)
     logger.info(args)
     return logger, log_dir, ckpt_path, img_path, tm_str
+
+def make_cache(args, log_dir):
+    if args.cache_latents:
+        cache_path = os.path.join(log_dir, 'cache')
+        os.makedirs(cache_path, exist_ok=True)
+        return cache_path
+    else:
+        return None
+    
+def make_wandb(args, tm_str):
+    if args.wandb:
+        # set wandb tags and descriptions
+        tags = []
+        tags.append(args.model_type)
+        descriptions = f'This is a training record of **{args.model_type}**. '
+        if args.vae is not None:
+            descriptions += f'The vae **{args.vae}** is enabled. '
+        if args.cache_latents:
+            descriptions += 'The latents are **cached**. '
+        wandb.init(entity='xxy', project='ginr', dir=args.log_dir, config = args, tags=tags, notes=descriptions)
+        wandb.run.name = tm_str
+
+def image_mse(mask, model_output, gt):
+    if mask is None:
+        return {'img_loss': ((model_output['model_out'] - gt['img']) ** 2).mean()}
+    else:
+        return {'img_loss': (mask * (model_output['model_out'] - gt['img']) ** 2).mean()}
+    
+def kl_per_group(kl_all):
+        kl_vals = torch.mean(kl_all, dim=1)
+        kl_coeff_i = torch.abs(kl_all)
+        kl_coeff_i = torch.mean(kl_coeff_i, dim=1, keepdim=True) + 0.01
+        return kl_coeff_i, kl_vals
+
+class AverageValueMeter(object):
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0.0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count

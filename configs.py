@@ -43,8 +43,10 @@ parser.add_argument('--save_every_n_steps', type=int, default=100)
 # vae params
 parser.add_argument('--vae', type=str, default=None, choices=[None, 'simple_vae', 'hierarchical_vae', 'layer_vae'], help = 'Which vae to use')
 parser.add_argument('--warmup_epochs', type=int, default=1, help='warmup epochs for annealing kl loss')
-parser.add_argument('--annealing_every', type=int, default=2, help='annealing kl loss every n epochs')
+parser.add_argument('--annealing_every_n_epochs', type=int, default=2, help='annealing kl loss every n epochs')
 parser.add_argument('--kl_r_max', type=float, default=1e-5, help='maximum kl loss weight')
+parser.add_argument('--vae_lr', type=float, default=1e-4, help='learning rate for vae')
+parser.add_argument('--vae_loss_type', type=str, default='10*recon+1*kld+1*mse', help='loss type for vae')
 args = parser.parse_args()
 
 '''
