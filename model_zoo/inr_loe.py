@@ -192,6 +192,7 @@ class INRLoe(nn.Module):
                  ks = [4, 4, 32, 32, 256],
                  latent_size=64, gate_type='separate',
                  noisy_gating=False, noise_module=None,
+                 std_latent = 1e-4
                  ):
         super(INRLoe, self).__init__()
         self.hidden_dim = hidden_dim
@@ -204,6 +205,8 @@ class INRLoe(nn.Module):
         self.ks = ks
         self.noisy_gating = noisy_gating
         self.gate_type = gate_type
+        self.latent_size = latent_size
+        self.std_latent = std_latent
 
         if self.noisy_gating and noise_module is not None:
             self.noise_generator = noise_module(output_size=sum(self.num_exps))
@@ -224,8 +227,8 @@ class INRLoe(nn.Module):
         self.net_param[0].apply(first_layer_sine_init)
 
         # print net weight shape
-        for name, weights_all in self.net_param.named_parameters():
-            print(f'{name}: {weights_all.shape}')
+        # for name, weights_all in self.net_param.named_parameters():
+        #     print(f'{name}: {weights_all.shape}')
 
         # for inference
         self.net.append(MetaSequential(
@@ -239,8 +242,8 @@ class INRLoe(nn.Module):
         self.net = MetaSequential(*self.net)
         self.net.apply(sine_init)
         self.net[0].apply(first_layer_sine_init)
-        for name, weights_all in self.net.named_parameters():
-            print(f'{name}: {weights_all.shape}')
+        # for name, weights_all in self.net.named_parameters():
+        #     print(f'{name}: {weights_all.shape}')
 
         output_size = sum(self.num_exps)
 
@@ -312,7 +315,7 @@ class INRLoe(nn.Module):
 
         return params
 
-    def forward(self, latents, coords, top_k=False, blend_alphas=[0, 0, 0, 0, 0]):
+    def forward(self, inputs, latents, top_k=False, blend_alphas=[0, 0, 0, 0, 0]):
 
         if self.gate_type == 'conditional':
             raw_gates, means, log_vars = self.gate_module(latents) # N_imgs x sum(num_exps)
@@ -338,12 +341,16 @@ class INRLoe(nn.Module):
 
         params = self.get_combined_weight(gates) # dict of combined weights
         
-        x = coords
+        x = inputs['coords']
         x = self.net(x, params=params)
         
         # x = torch.tanh(x)
+        result = {'gates': gates,
+                 'model_out': x,
+                 'importance': importance,
+                 'mu_var': mu_var}
 
-        return x, gates, importance, mu_var
+        return result
     
     def get_parameters(self):
         # return both the parameters of the network and the gate module
@@ -355,6 +362,17 @@ class INRLoe(nn.Module):
         param_gen_list.append(self.net_param.named_parameters())
 
         return itertools.chain(*param_gen_list)
+    
+    def get_context_params(self, batch_size, eval_mode=False):
+        if self.gate_type in ['conditional', 'separate']:
+            context_params = torch.randn(batch_size, len(self.num_exps),self.latent_size).cuda() * self.std_latent
+        elif self.gate_type == 'shared':
+            context_params = torch.randn(batch_size, self.latent_size).cuda() * self.std_latent
+        else:
+            raise ValueError("Invalid gate type")
+        context_params = context_params.detach()
+        context_params.requires_grad_()
+        return context_params
     
 
 def init_weights_relu(m):

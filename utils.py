@@ -127,7 +127,7 @@ def make_wandb(args, tm_str):
         if args.cache_latents:
             descriptions += 'The latents are **cached**. '
         wandb.init(entity='xxy', project='ginr', dir=args.log_dir, config = args, tags=tags, notes=descriptions)
-        wandb.run.name = tm_str
+        wandb.run.name = args.model_type.upper()+tm_str
 
 def image_mse(mask, model_output, gt):
     if mask is None:

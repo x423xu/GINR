@@ -1,6 +1,6 @@
 input_dim: 3
 output_dim: 1
-model_type: loe
+model_type: inr_loe
 hidden_dim: 64
 num_hidden: 4
 num_exps: [64, 64, 64, 64, 64]

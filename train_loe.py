@@ -79,7 +79,7 @@ def train(args):
                                               latent_channels=args.hidden_features,
                                               norm_latents=args.norm_latents,
                                              )
-    elif args.model_type == 'loe':
+    elif args.model_type == 'inr_loe':
         model = INRLoe(
                      input_dim=args.input_dim,
                      output_dim=args.output_dim,
@@ -89,6 +89,7 @@ def train(args):
                      ks=args.ks,
                      latent_size=args.latent_size,
                      gate_type=args.gate_type,
+                     std_latent = args.std_latent,
                      ).cuda()
     else:
         raise NotImplementedError
@@ -137,9 +138,9 @@ def train(args):
             
             # latents step
             for inner_step in range(args.inner_steps):
-                pred_inner, gates_inner, importance_inner, _ = model(context_params, model_input['coords'], args.top_k, 
+                pred_inner = model(model_input, context_params,  args.top_k, 
                                                 blend_alphas=blend_alphas)
-                loss_inner = ((pred_inner - gt['img']) ** 2).mean()
+                loss_inner = ((pred_inner['model_out'] - gt['img']) ** 2).mean()
                 grad_inner = torch.autograd.grad(loss_inner,
                                             context_params,
                                             create_graph=not args.eval)[0]
@@ -148,12 +149,14 @@ def train(args):
                 else:
                     context_params = context_params - args.lr_inner * grad_inner
             
-            pred_outer, gates_outer, importance_outer, _ = model(context_params, model_input['coords'], args.top_k, 
-                                                blend_alphas=blend_alphas)
-            losses = ((pred_outer - gt['img']) ** 2).mean()
+            pred_outer= model(model_input,
+                              context_params,  
+                              args.top_k, 
+                              blend_alphas=blend_alphas)
+            losses = ((pred_outer['model_out'] - gt['img']) ** 2).mean()
             all_losses += losses.detach().cpu().item()*gt['img'].size(0)
             # PSNR
-            for pred_img, gt_img in zip(pred_outer.detach().cpu(), gt['img'].cpu()):
+            for pred_img, gt_img in zip(pred_outer['model_out'].detach().cpu(), gt['img'].cpu()):
                 if args.pred_type == 'voxel':
                     psnr = compute_psnr(pred_img * 0.5 + 0.5, gt_img * 0.5 + 0.5) # rescale from [-1, 1] to [0, 1]
                         
@@ -162,7 +165,7 @@ def train(args):
 
             # voxel accuracy
             if args.pred_type == 'voxel':
-                pred_voxel = pred_outer >= 0.0 # [non-exist (-1), exists (+1)]
+                pred_voxel = pred_outer['model_out'] >= 0.0 # [non-exist (-1), exists (+1)]
                 gt_voxel = gt['img'] >= 0.0
                 acc = (pred_voxel == gt_voxel).float().mean()
                 all_acc += float(acc) * gt['img'].size(0)
@@ -186,11 +189,11 @@ def train(args):
                 if args.pred_type == 'voxel':
                     description += f' acc:{all_acc/steps:.4f}'
                 logger.info(description)
-                psnr = compute_psnr(pred_outer.cpu() * 0.5 + 0.5, gt['img'].cpu() * 0.5 + 0.5)
+                psnr = compute_psnr(pred_outer['model_out'].cpu() * 0.5 + 0.5, gt['img'].cpu() * 0.5 + 0.5)
                 if args.wandb:
                     wandb.log({'outer_loss': (all_losses/steps), 'psnr': psnr, 'global_step': global_steps})
                 if step % args.save_every_n_steps == 0:
-                    ind = pred_outer[0]>=0
+                    ind = pred_outer['model_out'][0]>=0
                     im_show = model_input['coords'][0][ind.squeeze()]
                     plot_single_pcd(im_show.detach().cpu().numpy(), '{}/point_cloud_e{}s{}.png'.format(img_path,epoch, step))
         scheduler.step()
