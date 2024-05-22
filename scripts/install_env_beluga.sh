@@ -19,6 +19,6 @@ pip install --no-index PyYAML
 pip install --no-index wandb
 pip install --no-index einops
 
-cp /scratch/xiaoyu/code/sampyl $SLURM_TMPDIR
-cd $SLURM_TMPDIR/sampyl
+cd /scratch/xiaoyu/code/sampyl
 python setup.py install
+cd /scratch/xiaoyu/code/GINR

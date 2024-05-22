@@ -1,0 +1,1 @@
+python train_inr.py --config cfgs/train_loe_shapenet.yml --batch_size 8 --save_every_n_steps 100 --dataset_root /scratch/xiaoyu/data/

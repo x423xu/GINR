@@ -1,2 +1,2 @@
-CUDA_VISIBLE_DEVICES=0 python train_inr.py --wandb --config cfgs/train_loe_shapenet.yml --batch_size 8 --save_every_n_steps 1000
+CUDA_VISIBLE_DEVICES=0 python train_inr.py --wandb --config cfgs/train_loe_shapenet.yml --batch_size 8 --save_every_n_steps 100 
 CUDA_VISIBLE_DEVICES=1 python train_inr.py --wandb --config cfgs/train_mnif_shapenet.yml --batch_size 8 --save_every_n_steps 1000
