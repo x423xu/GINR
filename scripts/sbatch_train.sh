@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=24000M
-#SBATCH --output=/project/def-zhouwang/xiaoyu/scripts/output/%A-%a.out
+#SBATCH --output=/project/def-zhouwang/xiaoyu/scripts/output/%x-%A-%a.out
 
 module load StdEnv/2020
 module load gcc opencv python/3.9 scipy-stack cuda/11.7 openmpi
