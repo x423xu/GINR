@@ -44,21 +44,25 @@ def plot_single_pcd(plot_dict,save_path, wandb = None):
     fig, axs = plt.subplots(1, num_imgs, figsize=(num_imgs*3, 3),subplot_kw={'projection': '3d'})
     fig.set_facecolor('lightgray') # set background color
     for i, (title, points) in enumerate(plot_dict.items()):
-        axs[i].set_aspect('equal')
+        if num_imgs>1:
+            ax = axs[i]
+        else:
+            ax = axs
+        ax.set_aspect('equal')
         if points.shape[0]>4000:
             skip = points.shape[0]//4000
             points = points[::skip]
-        axs[i].set_aspect('equal')
+        ax.set_aspect('equal')
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
         rotation_matrix = np.asarray([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
         pcd = pcd.transform(rotation_matrix)
         X, Y, Z = get_pts(pcd)
         t = Z
-        axs[i].scatter(X, Y, Z, c=t, cmap='jet', marker='o', s=20, depthshade=True, edgecolors='k')
-        axs[i].grid(False)
-        axs[i].set_facecolor('lightgray') # set background color
-        set_axes_equal(axs[i])
-        axs[i].set_title(title)
+        ax.scatter(X, Y, Z, c=t, cmap='jet', marker='o', s=20, depthshade=True, edgecolors='k')
+        ax.grid(False)
+        ax.set_facecolor('lightgray') # set background color
+        set_axes_equal(ax)
+        ax.set_title(title)
     fig.savefig(save_path, format='png', dpi=600)
     if wandb is not None:
         wandb.log({save_path.split('/')[-1].split('_')[0]: wandb.Image(fig)})
