@@ -114,7 +114,7 @@ class MoECombiner(torch_geometric.nn.conv.MessagePassing):
         return x_j * edge_weights
 
 class ConditionalGateModule(nn.Module):
-    def __init__(self, latent_size, num_exps=[64, 64, 64, 64]):
+    def __init__(self, latent_size, num_exps=[64, 64, 64, 64], norm_latents = False):
         super().__init__()
         self.num_exps = num_exps
         self.nets = nn.ModuleList()
@@ -192,11 +192,12 @@ class INRLoe(nn.Module):
                  ks = [4, 4, 32, 32, 256],
                  latent_size=64, gate_type='separate',
                  noisy_gating=False, noise_module=None,
-                 std_latent = 1e-4
+                 std_latent = 1e-4, norm_latents=False
                  ):
         super(INRLoe, self).__init__()
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
+        num_hidden = len(num_exps)-1
         self.num_hidden = num_hidden
         self.net_param = []
         self.net = []
@@ -248,9 +249,9 @@ class INRLoe(nn.Module):
         output_size = sum(self.num_exps)
 
         if self.gate_type == 'conditional':
-            self.gate_module = ConditionalGateModule(latent_size, num_exps=self.num_exps)
+            self.gate_module = ConditionalGateModule(latent_size, num_exps=self.num_exps, norm_latents=norm_latents)
         elif self.gate_type == 'separate':
-            self.gate_module = SeparateGateModule(latent_size, num_exps=self.num_exps)
+            self.gate_module = SeparateGateModule(latent_size, num_exps=self.num_exps, norm_latents=norm_latents)
         elif self.gate_type == 'shared':
             self.gate_module = nn.Linear(latent_size, output_size)
             for i, num_exp in enumerate(self.num_exps):

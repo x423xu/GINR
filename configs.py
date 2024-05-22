@@ -6,6 +6,7 @@ parser.add_argument('--seed', type=int, default=0)
 parser.add_argument('--config', type=str, default='cfgs/train_functa_shapenet.yml')
 
 # data params
+parser.add_argument('--dataset', type=str, default='shapenet')
 parser.add_argument('--dataset_root', type=str, default='/home/xxy/Documents/data/')
 parser.add_argument('--split', type=str, default='train')
 parser.add_argument('--random_scale', action='store_true', default=False)
@@ -19,6 +20,7 @@ parser.add_argument('--lr_outer', type=float, default=0.0001, help='learning rat
 parser.add_argument('--inner_steps', type=int, default=3, help='number of inner steps for each coords')
 parser.add_argument('--lr_inner', type=float, default=1e-4, help='learning rate for inner loop')
 parser.add_argument('--cache_latents', action='store_true', default=False, help = 'training with cached latents')
+parser.add_argument('--resume_from', type=str, default=None, help='The path where the resumed training starts from')
 
 # ddp training params
 parser.add_argument('--ddp', action='store_true', default=False)

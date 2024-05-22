@@ -32,14 +32,14 @@ def get_data(args):
                        dataset_root=args.dataset_root,
                        shuffle=not args.eval and args.cache_latents,) # we shuffle only once if cache latents
     dataloader = DataLoader(dataset,
-                        shuffle=not args.eval and not args.cache_latents,
+                        shuffle=not args.eval and not args.cache_latents, # since the shuffle is disabled if cache_latents is True, the training log will be a little bit different
                         batch_size=args.batch_size,
                         pin_memory=True,
                         num_workers=args.num_workers,
-                        worker_init_fn=_seed_worker)
+                        worker_init_fn=_seed_worker) # set the seed for reproducibility
     return dataloader
 
-def get_model(args):
+def get_model(args, ckpt=None):
     if args.model_type == 'functa':
         model = meta_modules.LatentModulatedSiren(in_channels=args.in_channels,
                                                 out_channels=args.out_channels,
@@ -77,14 +77,26 @@ def get_model(args):
                      latent_size=args.latent_size,
                      gate_type=args.gate_type,
                      std_latent=args.std_latent,
+                     norm_latents=args.norm_latents,
                      ).cuda()
     else:
         raise NotImplementedError
-    model = model.cuda()
     model.train()
+    keep_params = dict()
+    with torch.no_grad():
+        for name, param in model.get_named_parameters():
+            keep_params[name] = param.clone()
+    meta_grad_init = [0 for _ in model.get_parameters()]
+    if ckpt is not None:
+        model.load_state_dict(ckpt['inr_model'])
+    model = model.cuda()
 
     if args.vae is not None:
         if args.vae == 'hierarchical_vae':
+            if args.model_type == 'functa' or args.model_type == 'mnif':
+                latent_dim = args.hidden_features
+            elif args.model_type == 'inr_loe':
+                latent_dim = args.latent_size*len(args.num_exps)
             vae_model = vb.VAEBackbone(input_channel = args.vae_input_channel, 
                                     latent_channel = args.vae_latent_channel,  
                                     layers = args.vae_layers, 
@@ -94,7 +106,7 @@ def get_model(args):
                                     dim_head = args.vae_dim_head,
                                     dropout = args.vae_dropout,
                                     sample_decoder = args.vae_sample_decoder,
-                                    latent_dim=args.hidden_features,)
+                                    latent_dim=latent_dim)
         elif args.vae == 'layer_vae':
             vae_model = vb.LayerVAE(input_channel = args.vae_input_channel, 
                                     latent_channel = args.vae_latent_channel,  
@@ -108,23 +120,31 @@ def get_model(args):
                                     latent_dim=args.hidden_features,)
         else:
             raise NotImplementedError
-        vae_model = vae_model.cuda()
         vae_model.train()
+        if ckpt is not None:
+            vae_model.load_state_dict(ckpt['vae_model'])
+        vae_model = vae_model.cuda()
     else:
         vae_model = None
-    return model, vae_model
+    
+    return model, vae_model, keep_params, meta_grad_init
 
-def make_training_params(args, logger, model, vae_model):
+def make_training_params(args, logger, model, vae_model, ckpt=None):
     params = sum(p.numel() for p in model.get_parameters())
     logger.info("Total number of parameters is: {}".format(params))
     logger.info("Model size is: {:.2f} MB".format(params * 4 / 1024**2)) 
     param_group = [{'params': model.get_parameters(), 'lr': args.lr_outer}]
     inr_optim = torch.optim.AdamW(param_group, lr=args.lr_outer, weight_decay=0)
     inr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(inr_optim, T_max=args.epochs, eta_min=1e-7)
-
+    if ckpt is not None:
+        inr_optim.load_state_dict(ckpt['inr_optim'])
+        inr_scheduler.load_state_dict(ckpt['inr_scheduler'])
     if args.vae is not None:
         vae_optim = torch.optim.AdamW(vae_model.parameters(), lr=args.vae_lr, weight_decay=0, betas=(0.9, 0.999))
         vae_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(vae_optim, T_max=args.epochs, eta_min=1e-7)
+        if ckpt is not None:
+            vae_optim.load_state_dict(ckpt['vae_optim'])
+            vae_scheduler.load_state_dict(ckpt['vae_scheduler'])
     else:
         vae_optim = None
         vae_scheduler = None
@@ -173,7 +193,14 @@ def model_update_step(model, model_input, context_params, inr_optim, meta_grad, 
 
 def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_epoch, model_input, gt, vae_loss_avg):
     if args.vae is not None:
-        z_dist, kl_all, kl_diag, log_q, log_p = vae_model(context_params.data.unsqueeze(1))
+        # get gt latents for vae
+        if args.model_type == 'inr_loe':
+            latents = context_params.data.clone()
+            b, nl, ne = latents.size()
+            latents = latents.view(b, -1)
+        elif args.model_type == 'functa' or args.model_type == 'mnif':
+            latents = context_params.data.clone()
+        z_dist, kl_all, kl_diag, log_q, log_p = vae_model(latents.unsqueeze(1))
         if args.vae_sample_decoder:
             z,_ = z_dist.sample()
         else:
@@ -191,11 +218,13 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
 
         # get reconstruction loss
         if args.vae_sample_decoder:
-            recon_loss = z_dist.log_prob(context_params.data)
+            recon_loss = z_dist.log_prob(latents)
         else:
-            recon_loss = nn.functional.mse_loss(z, context_params.data,reduction='sum')
+            recon_loss = nn.functional.mse_loss(z, latents,reduction='sum')
         
         # do not calculate the gradient for the model
+        if args.model_type == 'inr_loe':
+            z = z.view(b, nl, ne)
         with torch.no_grad():
             model_output = model(model_input, z)
         mse_loss = image_mse(None, model_output, gt)['img_loss']
@@ -254,25 +283,19 @@ def train(args):
         - imgs
         - cache (if cache_latents is True)
     '''
+    ckpt = set_resume(args) # it has to be here, since the random state is also resumed and has to be at very beginning
     logger, log_dir, ckpt_path, img_path, tm_str = make_log(args)
     cache_path = make_cache(args, log_dir)
 
     '''training configuration steps'''
     make_wandb(args, tm_str)
     train_loader = get_data(args)
-    model, vae_model = get_model(args)
-    logger.info(model)  
+    model, vae_model, keep_params, meta_grad_init = get_model(args, ckpt)
+    logger.info(model) if args.resume_from is None else logger.info('Resume training from {}'.format(args.resume_from))
     inr_optim, inr_scheduler, vae_optim, vae_scheduler = make_training_params(args, logger, model, vae_model)
-    keep_params = dict()
 
-    '''
-    Not sure how do this affect the training process. Just follow the original mnif code.
-    '''
-    with torch.no_grad():
-        for name, param in model.get_named_parameters():
-            keep_params[name] = param.clone()
-    meta_grad_init = [0 for _ in model.get_parameters()]
-    global_steps = 0
+    global_steps = 0 if args.resume_from is None else ckpt['global_steps']
+    start_epoch = 0 if args.resume_from is None else ckpt['last_epoch']+1
     '''
     Not sure how do this affect the training process. Just follow the original mnif code.
     '''
@@ -281,7 +304,7 @@ def train(args):
             for name, param in model.get_named_parameters():
                 param = keep_params[name].clone()
 
-    for epoch in range(args.epochs):
+    for epoch in range(start_epoch, args.epochs):
         all_losses, all_psnr, all_acc, steps = 0.0, 0.0, 0.0, 0
         vae_loss_avg = AverageValueMeter() if args.vae is not None else None
         for step, (model_input_batch, gt_batch) in enumerate(train_loader):
@@ -307,8 +330,7 @@ def train(args):
             model_output, losses = model_update_step(model, model_input, context_params, inr_optim, meta_grad, gt)
             vae_mse, recon_loss, kld_loss, vae_out = vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, len(train_loader), model_input, gt, vae_loss_avg)   
             
-            # log step
-            global_steps += 1       
+            # log step       
             all_losses, all_psnr, all_acc, steps = get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps) 
             if step % args.log_every_n_steps == 0:
                 description = f'[e{epoch} s{step}/{len(train_loader)}], mse_loss:{all_losses/steps:.4f} PSNR:{all_psnr/steps:.2f} Ctx-mean:{float(context_params.mean()):.8f}'
@@ -323,17 +345,38 @@ def train(args):
                 if step % args.save_every_n_steps == 0:
                     ind = model_output['model_out'][0]>=0
                     im_show = model_input['coords'][0][ind.squeeze()]
-                    plot_single_pcd(im_show.detach().cpu().numpy(), '{}/point_cloud_e{}s{}.png'.format(img_path,epoch, step))
+                    plot_dict = {
+                        'Inr_out': im_show.detach().cpu().numpy(),
+                    }
                     if args.vae is not None:
                         vae_ind = vae_out['model_out'][0]>=0
                         vae_show = model_input['coords'][0][vae_ind.squeeze()]
-                        plot_single_pcd(vae_show.detach().cpu().numpy(), '{}/vae_point_cloud_e{}s{}.png'.format(img_path,epoch, step))
+                        plot_dict.update(
+                            {'VAE_out': vae_show.detach().cpu().numpy()}
+                        )
+                    plot_single_pcd(plot_dict, '{}/point_cloud_e{}s{}.png'.format(img_path,epoch, step))
+            global_steps += 1
             
         inr_scheduler.step()
         if args.vae is not None:
             vae_scheduler.step()
         if epoch % args.ckpt_every_n_epochs == 0:
-            torch.save(model.state_dict(), os.path.join(ckpt_path, 'model_{}.pt'.format(epoch)))
+            ckpt_dict = {
+                'args': args,
+                'last_epoch': epoch,
+                'global_steps': global_steps,
+                'inr_model': model.state_dict(),
+                'inr_optim': inr_optim.state_dict(),
+                'inr_scheduler': inr_scheduler.state_dict(),               
+                'vae_model': vae_model.state_dict() if args.vae is not None else None,
+                'vae_optim': vae_optim.state_dict() if args.vae is not None else None,
+                'vae_scheduler': vae_scheduler.state_dict() if args.vae is not None else None,
+                'random_states': get_random_states(),
+            }
+            torch.save(ckpt_dict, os.path.join(ckpt_path, 'ckpt_{}.pt'.format(epoch)))
+    logger.info('Training finished')
+    if args.wandb:
+        wandb.finish()
                 
 
 
