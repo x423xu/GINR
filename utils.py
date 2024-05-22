@@ -88,9 +88,9 @@ def make_log(args):
             os.makedirs(args.log_dir)
         # make path
         tm_str = get_timestr()
-        tm_str = tm_str + '_' + args.model_type.upper()+ '_' +args.dataset.upper()
+        tm_str = tm_str + '+' + args.model_type.upper()+ '+' +args.dataset.upper()
         if args.vae is not None:
-            tm_str = tm_str + '_' + args.vae.upper()
+            tm_str = tm_str + '+' + args.vae.upper()
         log_dir = os.path.join(args.log_dir, tm_str)
     ckpt_path = os.path.join(log_dir, 'checkpoints')
     img_path = os.path.join(log_dir, 'imgs')
@@ -176,7 +176,7 @@ def set_resume(args):
         model_name = os.listdir(os.path.join(args.resume_from, 'checkpoints'))
         latest_model = sorted(model_name, key=lambda x: int(x.split('_')[1].split('.')[0]), reverse=True)[0]
         ckpt = torch.load(os.path.join(args.resume_from,'checkpoints',latest_model), map_location='cpu')
-        load_random_states(ckpt['random_states'])
+        # load_random_states(ckpt['random_states'])
     else:
         ckpt = None
     '''

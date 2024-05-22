@@ -185,7 +185,7 @@ class AttnCell(nn.Module):
 VAE BACKBONE:
     input_channel: 1, input tensor is of shape (b, 1, L) = (batch_size, input_channel, input_length)
 '''
-class VAEBackbone(nn.Module):
+class HVAEBackbone(nn.Module):
     def __init__(self,
                  input_channel = 1, 
                  latent_channel = 64,  
@@ -197,7 +197,7 @@ class VAEBackbone(nn.Module):
                  dropout = 0.25,
                  sample_decoder = False,
                  latent_dim = 1024):
-        super(VAEBackbone, self).__init__()
+        super(HVAEBackbone, self).__init__()
         
         num_layers = len(layers) # How many layers for encoder/decoder tower
 
@@ -379,7 +379,10 @@ class VAEBackbone(nn.Module):
         return out_dist, kl_all, kl_diag, log_q, log_p
     
 
-class LayerVAE(VAEBackbone):
+'''
+For layer vae, we assume a forward directional dependency.
+'''
+class LayerVAE(nn.Module):
     def __init__(self,
                  input_channel = 1, 
                  latent_channel = 64,  
@@ -391,33 +394,106 @@ class LayerVAE(VAEBackbone):
                  dropout = 0.25,
                  sample_decoder = False,
                  latent_dim = 1024):
-        super(LayerVAE, self).__init__(
-            input_channel=input_channel,
-            latent_channel=latent_channel,
-            layers=layers,
-            sampler_dim=sampler_dim,
-            prior_scale=prior_scale,
-            num_heads=num_heads,
-            dim_head=dim_head,
-            dropout=dropout,
-            sample_decoder=sample_decoder,
-            latent_dim=latent_dim
+        super(LayerVAE, self).__init__()
+        num_layers = len(layers) # How many layers for encoder/decoder tower
+
+        self.prior_scale = prior_scale # prior sclae for generating latents: in our experience, 1e-4 is a good choice.
+        self.num_layers = num_layers
+        self.sample_decoder = sample_decoder # should we sample the last layer of decoder? True: a learned std, False: a prior std of 1
+
+        self.encoder_tower = nn.ModuleList()
+        self.decoder_tower = nn.ModuleList()
+
+        self.enc_combiners = nn.ModuleList()
+        self.dec_combiners = nn.ModuleList()
+
+        self.enc_sampler = nn.ModuleList()
+        self.dec_sampler = nn.ModuleList()
+
+        # get encoder tower
+        '''
+        Channel: 
+            layer 1: C -> C
+            layer 2: C -> C
+            layer 3: C -> C
+            layer n > 3: C -> C
+        '''
+        for n in range(num_layers):
+            Cin = latent_channel
+            Cout = latent_channel
+            self.encoder_tower.append(AttnCell(dim=Cin, depth = int(layers[n]), heads = num_heads, dim_head = dim_head, mlp_dim = Cin,out_dim=Cout, dropout=dropout)) 
+            self.enc_combiners.append(EncCombinerCell(Cout, Cout))
+            self.enc_sampler.append(
+                nn.Sequential(nn.Linear(Cout, sampler_dim,bias=True)))
+        
+        # get decoder tower
+        '''
+        Channel:
+            layer n>3: C -> C
+            layer 3: C -> C
+            layer 2: C -> C
+            layer 1: C -> C
+        '''
+        for n in range(num_layers):
+            Cin = latent_channel
+            Cout = latent_channel
+            self.decoder_tower.append(AttnCell(dim=Cin, depth = int(layers[n]), heads = num_heads, dim_head = dim_head, mlp_dim = Cin,out_dim=Cout, dropout=dropout))
+            self.dec_combiners.append(DecCombinerCell(sampler_dim//2, Cin, Cin))
+            if n<num_layers-1: # As the NVAE, the number of decoder equals the number of encoder minus 1
+                self.dec_sampler.append(nn.Sequential(nn.Linear(Cout, sampler_dim, bias=True)))
+        
+        self.enc_0 = nn.Sequential(
+            nn.ELU(),
+            nn.Linear(in_features=latent_channel, out_features=latent_channel),
         )
+
+        '''
+        For a tensor with shape (b,c,l), we firstly reshape to (b, c, l1, l2)
+        '''
+        ldmp = self.get_maximal_factor_pair(latent_dim)
+        lcmp = self.get_maximal_factor_pair(latent_channel)
+        self.pre_processor = nn.Sequential(     
+            nn.Conv1d(in_channels=input_channel, out_channels=latent_channel, kernel_size=1, stride=1, padding=0, bias=True),
+            Rearrange('b (l1 l2) (l3 l4) -> b (l1 l3) (l2 l4)', l1 = lcmp[0], l2 = lcmp[1], l3 = ldmp[0], l4 = ldmp[1]),
+            nn.Conv1d(in_channels=lcmp[0]*ldmp[0], out_channels=latent_channel, kernel_size=1, stride=1, padding=0, bias=True),
+            Rearrange('b c l -> b l c', c = latent_channel)
+        )
+        # to generate prior z_1
+        prior_ftr0_size = (lcmp[1]*ldmp[1],latent_channel) # should align with the siren latents' length
+        self.prior_ftr0 = nn.Parameter(torch.rand(size=prior_ftr0_size), requires_grad=True)
+        self.post_processor = nn.Sequential(
+            nn.Conv1d(lcmp[1]*ldmp[1], latent_dim, kernel_size=1, padding=0, stride=1, bias=True),
+            nn.ELU(),
+            nn.Linear(latent_channel, input_channel, bias=True),
+        )
+        if sample_decoder:
+            self.dist_embedding = ZCombiner(latent_dim, 2*latent_dim) # should align with the inr latents' length
+    
+    def get_maximal_factor_pair(self,number):
+        for i in range(1, int(number**0.5) + 1):
+            if number % i == 0:
+                factor_pair = (i, number // i)
+                max_factor_pair = factor_pair
+        return max_factor_pair
     
     def forward(self, z_in, return_meta = False):
+        # the z_in should be of shape (b, n, L) = (batch_size, num_layers, latents_length)
+        batch_size, num_layers, latent_dim  = z_in.size()
+        z_in = z_in.view(batch_size*num_layers, 1, latent_dim)
         # s1. we want to get posterior zn,...,z2,z1,z0 -> z0,z1,z2,...,zn
         z_n = self.pre_processor(z_in)
+        z_n = rearrange(z_n, '(b n) l d -> b n l d', b=batch_size, n=num_layers)
         z_posterior = []
         z_enc_combiners = []
         for n in range(self.num_layers):
-            z_n = self.encoder_tower[n](z_n) # (b, L, 64->64->128->256)
-            z_posterior.append(z_n)
+            z_enc = self.encoder_tower[n](z_n[:,n,...]) # (b, L, 64->64->64->64)
+            z_posterior.append(z_enc)
             z_enc_combiners.append(self.enc_combiners[n])
         z_posterior.reverse()
         z_enc_combiners.reverse()
 
         # s2. get the first posterior
-        param_0 = self.enc_0[0](z_posterior[0]) # q_0 (b, L, 256)
+        param_0 = self.enc_0[0](z_posterior[0]) # q_0 (b, L, 64)
         param_0 = self.enc_sampler[self.num_layers-1](param_0) # q_0 (b, L, 40)
         mu_q, log_sigma_q = torch.chunk(param_0, 2, dim=2) # mu_q, log_sigma_q (b, L,20)
         dist = Normal(mu_q, log_sigma_q)
@@ -427,7 +503,7 @@ class LayerVAE(VAEBackbone):
         all_log_q = [log_q]
 
         # s3. get the first prior
-        dist = Normal(torch.zeros_like(mu_q), torch.ones_like(log_sigma_q)+torch.log(torch.tensor(self.prior_scale,device = mu_q.device)))
+        dist = Normal(torch.zeros_like(mu_q), torch.log(torch.tensor(self.prior_scale,device = mu_q.device)))
         log_p= dist.log_p(z) # (b, L, 20)
         all_p = [dist]
         all_log_p = [log_p]
@@ -441,7 +517,7 @@ class LayerVAE(VAEBackbone):
         s = s.expand(batch_size, -1, -1)
         s = self.dec_combiners[0](s, z)
         s = self.decoder_tower[0](s)
-
+        out_tensor = [s]
         # s4. get the combined posterior from the features of generative model
         for n in range(1,self.num_layers):     
             # a1. get prior
@@ -467,16 +543,20 @@ class LayerVAE(VAEBackbone):
             # a3. combine posterior with prior features
             s = self.dec_combiners[n](s, z)
             s = self.decoder_tower[n](s)
+            out_tensor.append(s)
 
         # the last combined s is sent to post_processor
-        s = self.post_processor(s)
+        out_tensor = torch.stack(out_tensor)
+        out_tensor = rearrange(out_tensor, 'n b l d -> (n b) l d', b=batch_size, n=num_layers)
+        out_tensor = self.post_processor(out_tensor)
+        out_tensor = rearrange(out_tensor, '(n b) l d -> b n l d', b=batch_size, n=num_layers)
 
         # Sample decoder or not: True for a learned std, False for a prior std of 1
         if self.sample_decoder:
-            z_mu, z_sigma = self.dist_embedding(s)
+            z_mu, z_sigma = self.dist_embedding(out_tensor)
             out_dist = Normal(z_mu, z_sigma)
         else:
-            out_dist = s
+            out_dist = out_tensor
 
         kl_all = []
         kl_diag = []

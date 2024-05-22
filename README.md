@@ -26,7 +26,7 @@ python train_inr.py --config cfgs/train_loe_shapenet.yml --log_dir logs
 - [x] Train mnif with hierarchical vae on shapenet
 - [x] Train loe with hierarchical vae on shapenet
 - [x] Add resume training
-- [ ] Train functa with layer vae
-- [ ] Train mnif with layer vae
-- [ ] Train loe with layer vae
+- [x] Train functa with layer vae
+- [x] Train mnif with layer vae
+- [x] Train loe with layer vae
 - [ ] Add mixture-pf-depth module

@@ -97,7 +97,7 @@ def get_model(args, ckpt=None):
                 latent_dim = args.hidden_features
             elif args.model_type == 'inr_loe':
                 latent_dim = args.latent_size*len(args.num_exps)
-            vae_model = vb.VAEBackbone(input_channel = args.vae_input_channel, 
+            vae_model = vb.HVAEBackbone(input_channel = args.vae_input_channel, 
                                     latent_channel = args.vae_latent_channel,  
                                     layers = args.vae_layers, 
                                     sampler_dim = args.vae_sampler_dim, 
@@ -108,16 +108,23 @@ def get_model(args, ckpt=None):
                                     sample_decoder = args.vae_sample_decoder,
                                     latent_dim=latent_dim)
         elif args.vae == 'layer_vae':
+            if args.model_type == 'functa' or args.model_type == 'mnif':
+                assert args.hidden_features % args.depth == 0, 'The hidden features must be divisible by the depth, so as for vae to work.'
+                latent_dim = args.hidden_features//args.depth
+                attn_layers = args.depth*[args.vae_attn_depth] # we do not want the prior features
+            elif args.model_type == 'inr_loe':
+                latent_dim = args.latent_size
+                attn_layers = len(args.num_exps)*[args.vae_attn_depth]
             vae_model = vb.LayerVAE(input_channel = args.vae_input_channel, 
                                     latent_channel = args.vae_latent_channel,  
-                                    layers = args.vae_layers, 
+                                    layers = attn_layers, 
                                     sampler_dim = args.vae_sampler_dim, 
                                     prior_scale = args.vae_prior_scale, 
                                     num_heads = args.vae_num_heads,
                                     dim_head = args.vae_dim_head,
                                     dropout = args.vae_dropout,
                                     sample_decoder = args.vae_sample_decoder,
-                                    latent_dim=args.hidden_features,)
+                                    latent_dim=latent_dim,)
         else:
             raise NotImplementedError
         vae_model.train()
@@ -192,20 +199,52 @@ def model_update_step(model, model_input, context_params, inr_optim, meta_grad, 
     return model_output, losses
 
 def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_epoch, model_input, gt, vae_loss_avg):
+    '''
+    for different inr models and different vae models, the shape of latent is different. Please refer to the paper for details.
+    '''
+    def _get_vae_mode(args):
+        mode_mapping= {
+            'functa': '0',
+            'mnif': '1',
+            'inr_loe': '2',
+            'hierarchical_vae': '0',
+            'layer_vae': '1',     
+        }
+        mode = mode_mapping[args.model_type]+mode_mapping[args.vae]
+        return mode
+            
     if args.vae is not None:
         # get gt latents for vae
-        if args.model_type == 'inr_loe':
+        vae_mode = _get_vae_mode(args)
+        if vae_mode == '00' or vae_mode =='10':
+            latents = context_params.data.clone()
+            latents_input = latents.unsqueeze(1)
+        elif vae_mode == '01' or vae_mode == '11':
+            latents = context_params.data.clone()
+            b, _ = latents.size()
+            latents_input = latents.contiguous().view(b, args.depth, args.hidden_features//args.depth)
+        elif vae_mode == '20':
             latents = context_params.data.clone()
             b, nl, ne = latents.size()
-            latents = latents.view(b, -1)
-        elif args.model_type == 'functa' or args.model_type == 'mnif':
+            latents_input = latents.contiguous().view(b, 1, -1)
+        elif vae_mode == '21':
             latents = context_params.data.clone()
-        z_dist, kl_all, kl_diag, log_q, log_p = vae_model(latents.unsqueeze(1))
+            b, nl, ne = latents.size()
+            latents_input = latents
+        else:
+            raise NotImplementedError
+        
+        z_dist, kl_all, kl_diag, log_q, log_p = vae_model(latents_input)
         if args.vae_sample_decoder:
             z,_ = z_dist.sample()
         else:
             z = z_dist
-        z = z.squeeze(2)
+        vae_latents = z.squeeze(-1)
+        if vae_mode == '01' or vae_mode=='11':
+            b, _, _ = vae_latents.size()
+            vae_latents = vae_latents.contiguous().view(b, -1)
+        elif vae_mode == '20':
+            vae_latents = vae_latents.contiguous().view(b, nl, ne)
 
         # get kld loss
         kl_all = torch.stack(kl_all)
@@ -220,13 +259,11 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
         if args.vae_sample_decoder:
             recon_loss = z_dist.log_prob(latents)
         else:
-            recon_loss = nn.functional.mse_loss(z, latents,reduction='sum')
+            recon_loss = nn.functional.mse_loss(vae_latents, latents,reduction='sum')
         
         # do not calculate the gradient for the model
-        if args.model_type == 'inr_loe':
-            z = z.view(b, nl, ne)
         with torch.no_grad():
-            model_output = model(model_input, z)
+            model_output = model(model_input, vae_latents)
         mse_loss = image_mse(None, model_output, gt)['img_loss']
         
         # get kld coefficient
