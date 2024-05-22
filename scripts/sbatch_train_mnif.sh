@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=rrg-zhouwang
-#SBATCH --time=1:00:00
+#SBATCH --time=1-10:00:00
 #SBATCH --mail-user=x423xu@uwaterloo.ca
 #SBATCH --mail-type=ALL
 #SBATCH --job-name=GINR
@@ -34,4 +34,5 @@ cd /scratch/xiaoyu/code/sampyl
 python setup.py install
 cd /scratch/xiaoyu/code/GINR
 wandb offline
-python train_inr.py --config cfgs/train_loe_shapenet.yml --batch_size 8 --save_every_n_steps 100 --dataset_root /scratch/xiaoyu/data/
+
+python train_inr.py --config cfgs/train_mnif_shapenet.yml --epochs 100 --batch_size 16 --save_every_n_steps 1000 --dataset_root /scratch/xiaoyu/data/ --wandb --log_dir logs

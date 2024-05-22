@@ -95,6 +95,12 @@ def make_log(args):
         tm_str = tm_str + '+' + args.model_type.upper()+ '+' +args.dataset.upper()
         if args.vae is not None:
             tm_str = tm_str + '+' + args.vae.upper()
+        if args.model_type == 'functa':
+            tm_str = tm_str + '+' + 'D{}W{}'.format(args.depth, args.width)
+        elif args.model_type == 'mnif':
+            tm_str = tm_str + '+' + 'D{}W{}E{}'.format(args.depth, args.width,args.k_mixtures)
+        elif args.model_type == 'inr_loe':
+            tm_str = tm_str + '+' + 'D{}W{}E{}'.format(len(args.num_exps), args.hidden_dim, args.num_exps[0])
         log_dir = os.path.join(args.log_dir, tm_str)
     ckpt_path = os.path.join(log_dir, 'checkpoints')
     img_path = os.path.join(log_dir, 'imgs')
