@@ -30,7 +30,8 @@ pip3 install --no-index PyYAML
 pip3 install --no-index wandb
 pip3 install --no-index einops
 
-cd /scratch/xiaoyu/code/sampyl
+cp -r /scratch/xiaoyu/code/sampyl $SLURM_TMPDIR
+cd $SLURM_TMPDIR/sampyl
 python setup.py install
 cd /scratch/xiaoyu/code/GINR
 wandb offline
