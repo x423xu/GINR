@@ -1,6 +1,8 @@
 #!/bin/bash
 #SBATCH --account=rrg-zhouwang
 #SBATCH --time=1:00:00
+#SBATCH --mail-user=x423xu@uwaterloo.ca
+#SBATCH --mail-type=ALL
 #SBATCH --job-name=GINR
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=12
