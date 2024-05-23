@@ -14,3 +14,4 @@ use_meta_sgd: True
 sampling: null
 width: 64
 depth: 4
+norm_latents: false
