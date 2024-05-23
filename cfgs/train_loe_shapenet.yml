@@ -3,9 +3,9 @@ output_dim: 1
 model_type: inr_loe
 hidden_dim: 64
 num_hidden: 4
-num_exps: [64, 64, 64, 64, 64]
+num_exps: [256, 256, 256, 256, 256]
 ks: [8, 8, 8, 8, 8]
-latent_size: 64
+latent_size: 512
 gate_type: separate
 w0: 50.0
 use_meta_sgd: false
