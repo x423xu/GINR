@@ -50,6 +50,9 @@ parser.add_argument('--annealing_every_n_epochs', type=int, default=2, help='ann
 parser.add_argument('--kl_r_max', type=float, default=1e-5, help='maximum kl loss weight')
 parser.add_argument('--vae_lr', type=float, default=1e-4, help='learning rate for vae')
 parser.add_argument('--vae_loss_type', type=str, default='10*recon+1*kld+1*mse', help='loss type for vae')
+
+# model params
+parser.add_argument('--pos_emb', type=str, default=None, choices=[None,'ffm'], help='which positional embedding to use')
 args = parser.parse_args()
 
 '''
