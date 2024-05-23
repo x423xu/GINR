@@ -167,7 +167,7 @@ class LatentToModulation(nn.Module):
                 modulate_shift: bool = True,
                 zero_init_last: bool = False,
                 batch_norm_init: bool = False,
-                activation: str = 'relu'):
+                activation: str = 'relu',):
         """Constructor.
 
         Args:
@@ -334,8 +334,8 @@ class LatentModulatedSiren(nn.Module):
                 meta_sgd_clip_range: Tuple[float, float] = (0., 1.),
                 ffm_map_scale = 16,
                 ffm_map_size = 1024,
-                norm_latents = False,
-                pos_emb = None):
+                pos_emb = None,
+                batch_norm_init = False,):
         """Constructor.
 
         Args:
@@ -388,7 +388,8 @@ class LatentModulatedSiren(nn.Module):
             width=width,
             num_modulation_layers=depth-1,
             modulate_scale=modulate_scale,
-            modulate_shift=modulate_shift)
+            modulate_shift=modulate_shift,
+            batch_norm_init=batch_norm_init)
 
         modsiren = [ModulatedSirenLayer(ffm_map_size if pos_emb is not None else in_channels,
                                         f_out=self.width,

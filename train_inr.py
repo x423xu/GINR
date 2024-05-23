@@ -51,7 +51,8 @@ def get_model(args, ckpt=None):
                                                 w0=args.w0,
                                                 ffm_map_scale=args.ffm_map_scale,
                                                 ffm_map_size=args.ffm_map_size,
-                                                pos_emb = args.pos_emb,)
+                                                pos_emb = args.pos_emb,
+                                                batch_norm_init=args.norm_latents)
     elif args.model_type == 'mnif':
         model = meta_modules.LinearMixtureINR(
                                             width=args.width,
