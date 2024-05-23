@@ -36,4 +36,4 @@ python setup.py install
 cd /scratch/xiaoyu/code/GINR
 wandb offline
 
-python train_inr.py --config cfgs/train_loe_shapenet.yml --epochs 100 --batch_size 24 --save_every_n_steps 1000 --dataset_root /scratch/xiaoyu/data/ --wandb --log_dir logs
+python train_inr.py --config cfgs/train_loe_shapenet_L.yml --epochs 100 --batch_size 24 --save_every_n_steps 1000 --dataset_root /scratch/xiaoyu/data/ --wandb --log_dir logs --cache_latents --vae layer_vae
