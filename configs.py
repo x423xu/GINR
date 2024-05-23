@@ -41,6 +41,7 @@ parser.add_argument('--wandb', action='store_true', default=False, help='use wan
 parser.add_argument('--log_every_n_steps', type=int, default=10)
 parser.add_argument('--ckpt_every_n_epochs', type=int, default=1)
 parser.add_argument('--save_every_n_steps', type=int, default=100)
+parser.add_argument('--tag', type=str, default=None, help='extra tag for wandb')
 
 # vae params
 parser.add_argument('--vae', type=str, default=None, choices=[None, 'simple_vae', 'hierarchical_vae', 'layer_vae'], help = 'Which vae to use')

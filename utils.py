@@ -142,6 +142,8 @@ def make_wandb(args, tm_str):
         # set wandb tags and descriptions
         tags = []
         tags.append(args.model_type)
+        if args.tag is not None:
+            tags.append(args.tag)
         descriptions = f'This is a training record of **{args.model_type}**. '
         if args.vae is not None:
             descriptions += f'The vae **{args.vae}** is enabled. '

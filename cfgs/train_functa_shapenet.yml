@@ -1,7 +1,7 @@
 dataset: shapenet
-pos_emb: ffm
+pos_emb: null
 ffm_map_scale: 16
-ffm_map_size: 256
+ffm_map_size: 1024
 hidden_features: 512
 act_type: sine
 w0: 30.0

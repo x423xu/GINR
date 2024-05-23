@@ -169,8 +169,6 @@ def make_training_params(args, logger, model, vae_model, ckpt=None):
     return inr_optim, inr_scheduler, vae_optim, vae_scheduler
 
 def latents_step(args, model, model_input, gt, context_params, meta_sgd_inner, cache_path, step):
-    for p in model.get_parameters():
-        p.requires_grad = False
     # latents updation step
     for inner_step in range(args.inner_steps):
         pred_inner = model(model_input, context_params)
@@ -187,8 +185,6 @@ def latents_step(args, model, model_input, gt, context_params, meta_sgd_inner, c
     '''
     if args.cache_latents:
         torch.save(context_params.detach().cpu(), os.path.join(cache_path, f'd{step}.pt'))
-    for p in model.get_parameters():
-            p.requires_grad = True
     return context_params
 
 def model_update_step(model, model_input, context_params, inr_optim, meta_grad, gt):
@@ -390,19 +386,19 @@ def train(args):
                     wandb.log({'outer_loss': (all_losses/steps), 'psnr': psnr,'global_step': global_steps})
                     if args.vae is not None:
                         wandb.log({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'global_step': global_steps})
-                if step % args.save_every_n_steps == 0:
-                    ind = model_output['model_out'][0]>=0
-                    im_show = model_input['coords'][0][ind.squeeze()]
-                    plot_dict = {
-                        'Inr_out': im_show.detach().cpu().numpy(),
-                    }
-                    if args.vae is not None:
-                        vae_ind = vae_out['model_out'][0]>=0
-                        vae_show = model_input['coords'][0][vae_ind.squeeze()]
-                        plot_dict.update(
-                            {'VAE_out': vae_show.detach().cpu().numpy()}
-                        )
-                    plot_single_pcd(plot_dict, '{}/point_cloud_e{}s{}.png'.format(img_path,epoch, step))
+            if step % args.save_every_n_steps == 0:
+                ind = model_output['model_out'][0]>=0
+                im_show = model_input['coords'][0][ind.squeeze()]
+                plot_dict = {
+                    'Inr_out': im_show.detach().cpu().numpy(),
+                }
+                if args.vae is not None:
+                    vae_ind = vae_out['model_out'][0]>=0
+                    vae_show = model_input['coords'][0][vae_ind.squeeze()]
+                    plot_dict.update(
+                        {'VAE_out': vae_show.detach().cpu().numpy()}
+                    )
+                plot_single_pcd(plot_dict, '{}/point_cloud_e{}s{}.png'.format(img_path,epoch, step))
             global_steps += 1
             
         inr_scheduler.step()
@@ -419,7 +415,7 @@ def train(args):
                 'vae_model': vae_model.state_dict() if args.vae is not None else None,
                 'vae_optim': vae_optim.state_dict() if args.vae is not None else None,
                 'vae_scheduler': vae_scheduler.state_dict() if args.vae is not None else None,
-                'random_states': get_random_states(),
+                # 'random_states': get_random_states(),
             }
             torch.save(ckpt_dict, os.path.join(ckpt_path, 'ckpt_{}.pt'.format(epoch)))
     logger.info('Training finished')
