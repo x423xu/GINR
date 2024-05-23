@@ -15,3 +15,6 @@ use_latent_embedding: True
 std_latent: 0.0001
 mixture_type: layerwise
 norm_latents: False
+pos_emb: null
+ffm_map_scale: 16
+ffm_map_size: 256

@@ -192,7 +192,11 @@ class INRLoe(nn.Module):
                  ks = [4, 4, 32, 32, 256],
                  latent_size=64, gate_type='separate',
                  noisy_gating=False, noise_module=None,
-                 std_latent = 1e-4, norm_latents=False
+                 std_latent = 1e-4, 
+                 ffm_map_scale = 16,
+                 ffm_map_size = 1024,
+                 norm_latents = False,
+                 pos_emb = False,
                  ):
         super(INRLoe, self).__init__()
         self.hidden_dim = hidden_dim

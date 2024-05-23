@@ -334,7 +334,8 @@ class LatentModulatedSiren(nn.Module):
                 meta_sgd_clip_range: Tuple[float, float] = (0., 1.),
                 ffm_map_scale = 16,
                 ffm_map_size = 1024,
-                norm_latents = False):
+                norm_latents = False,
+                pos_emb = None):
         """Constructor.
 
         Args:
@@ -389,7 +390,7 @@ class LatentModulatedSiren(nn.Module):
             modulate_scale=modulate_scale,
             modulate_shift=modulate_shift)
 
-        modsiren = [ModulatedSirenLayer(ffm_map_size,
+        modsiren = [ModulatedSirenLayer(ffm_map_size if pos_emb is not None else in_channels,
                                         f_out=self.width,
                                         is_first=True,
                                         w0=self.w0,
@@ -413,10 +414,12 @@ class LatentModulatedSiren(nn.Module):
         
         self.modsiren = nn.ModuleList(modsiren)
         # positional encoding
-        self.map = FourierFeatMapping(self.in_channels,
-                map_scale=ffm_map_scale,
-                map_size=ffm_map_size,
-            )
+        if pos_emb is not None:
+            self.map = FourierFeatMapping(self.in_channels,
+                    map_scale=ffm_map_scale,
+                    map_size=ffm_map_size,
+                )
+        self.pos_emb = pos_emb
 
     def shared_parameters(self):
         return itertools.chain(self.modsiren.parameters(), self.latent_to_modulation.parameters())
@@ -477,8 +480,10 @@ class LatentModulatedSiren(nn.Module):
         #     x = coords.view(-1, coords.shape[-1])
         # else:
         #     x = coords
-
-        x = self.map(coords)
+        if self.pos_emb is not None:
+            x = self.map(coords)
+        else:
+            x = coords
         #print('len(self.modsiren)', len(self.modsiren), self.depth-1)
         # Hidden layers
         for i in range(0, self.depth-1):
@@ -531,7 +536,8 @@ class LinearMixtureINR(nn.Module):
                 init_path: str = '',
                 ffm_map_scale = 16,
                 ffm_map_size = 1024,
-                norm_latents = False
+                norm_latents = False,
+                pos_emb = None,
                 ):
         """Constructor.
 
@@ -593,16 +599,18 @@ class LinearMixtureINR(nn.Module):
             outermost_linear = True
 
         # positional encoding
-        self.map = FourierFeatMapping(in_channels,
-                map_scale=ffm_map_scale,
-                map_size=ffm_map_size,
-            )
+        if pos_emb is not None:
+            self.map = FourierFeatMapping(in_channels,
+                    map_scale=ffm_map_scale,
+                    map_size=ffm_map_size,
+                )
+        self.pos_emb = pos_emb
         sirens = []
 
         for i in range(k_mixtures):
             sirens.append(list(modules.FCBlock(
                 # in_features=in_channels,
-                in_features = ffm_map_size,
+                in_features = ffm_map_size if pos_emb is not None else in_channels,
                 out_features=out_channels,
                 num_hidden_layers=depth,
                 hidden_features=width,
@@ -613,7 +621,7 @@ class LinearMixtureINR(nn.Module):
         # for inference
         self.model = modules.FCBlock(
             # in_features=in_channels,
-            in_features = ffm_map_size,
+            in_features = ffm_map_size if pos_emb is not None else in_channels,
             out_features=out_channels,
             num_hidden_layers=depth,
             hidden_features=width,
@@ -624,7 +632,7 @@ class LinearMixtureINR(nn.Module):
         # for parameter
         self.model_param = modules.FCBlock(
             # in_features=in_channels,
-            in_features = ffm_map_size,
+            in_features = ffm_map_size if pos_emb is not None else in_channels,
             out_features=out_channels,
             num_hidden_layers=depth,
             hidden_features=width,
@@ -734,7 +742,8 @@ class LinearMixtureINR(nn.Module):
     def get_input_embedding(self, inputs, context_params):
         # Compute coordinate embedding is needed
         x = inputs['coords']
-        x = self.map(x)
+        if self.pos_emb is not None:
+            x = self.map(x)
         
         return x
 

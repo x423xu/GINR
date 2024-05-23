@@ -35,8 +35,8 @@ def get_data(args):
                         shuffle=not args.eval and not args.cache_latents, # since the shuffle is disabled if cache_latents is True, the training log will be a little bit different
                         batch_size=args.batch_size,
                         pin_memory=True,
-                        num_workers=args.num_workers,
-                        worker_init_fn=_seed_worker) # set the seed for reproducibility
+                        num_workers=args.num_workers,)
+                        # worker_init_fn=_seed_worker) # set the seed for reproducibility
     return dataloader
 
 def get_model(args, ckpt=None):
@@ -48,23 +48,30 @@ def get_model(args, ckpt=None):
                                                 latent_dim=args.hidden_features,
                                                 latent_vector_type='instance',
                                                 use_meta_sgd=args.use_meta_sgd,
-                                                w0=args.w0)
+                                                w0=args.w0,
+                                                ffm_map_scale=args.ffm_map_scale,
+                                                ffm_map_size=args.ffm_map_size,
+                                                pos_emb = args.pos_emb,)
     elif args.model_type == 'mnif':
-        model = meta_modules.LinearMixtureINR(width=args.width,
-                                              depth=args.depth,
-                                              in_channels=args.in_channels,
-                                              out_channels=args.out_channels,
-                                              k_mixtures=args.k_mixtures,                                             
-                                              w0=args.w0,
-                                              mixture_type=args.mixture_type,
-                                              embedding_type=args.embedding_type,
-                                              outermost_linear=args.outermost_linear,
-                                              pred_type=args.pred_type,
-                                              use_meta_sgd=args.use_meta_sgd,
-                                              use_latent_embedding=args.use_latent_embedding,
-                                              std_latent=args.std_latent,
-                                              latent_channels=args.hidden_features,
-                                              norm_latents=args.norm_latents,
+        model = meta_modules.LinearMixtureINR(
+                                            width=args.width,
+                                            depth=args.depth,
+                                            in_channels=args.in_channels,
+                                            out_channels=args.out_channels,
+                                            k_mixtures=args.k_mixtures,                                             
+                                            w0=args.w0,
+                                            mixture_type=args.mixture_type,
+                                            embedding_type=args.embedding_type,
+                                            outermost_linear=args.outermost_linear,
+                                            pred_type=args.pred_type,
+                                            use_meta_sgd=args.use_meta_sgd,
+                                            use_latent_embedding=args.use_latent_embedding,
+                                            std_latent=args.std_latent,
+                                            latent_channels=args.hidden_features,
+                                            norm_latents=args.norm_latents,
+                                            ffm_map_scale=args.ffm_map_scale,
+                                            ffm_map_size=args.ffm_map_size,
+                                            pos_emb = args.pos_emb,
                                              )
     elif args.model_type == 'inr_loe':
         model = INRLoe(
@@ -78,6 +85,9 @@ def get_model(args, ckpt=None):
                      gate_type=args.gate_type,
                      std_latent=args.std_latent,
                      norm_latents=args.norm_latents,
+                     ffm_map_scale=args.ffm_map_scale,
+                     ffm_map_size=args.ffm_map_size,
+                     pos_emb = args.pos_emb,
                      ).cuda()
     else:
         raise NotImplementedError
