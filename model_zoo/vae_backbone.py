@@ -310,7 +310,7 @@ class HVAEBackbone(nn.Module):
         all_log_q = [log_q]
 
         # s3. get the first prior
-        dist = Normal(torch.zeros_like(mu_q), torch.ones_like(log_sigma_q)+torch.log(torch.tensor(self.prior_scale,device = mu_q.device)))
+        dist = Normal(torch.zeros_like(mu_q), torch.zeros_like(log_sigma_q)+torch.log(torch.tensor(self.prior_scale,device = mu_q.device)))
         log_p= dist.log_p(z) # (b, L, 20)
         all_p = [dist]
         all_log_p = [log_p]
