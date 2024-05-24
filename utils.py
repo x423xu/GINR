@@ -309,6 +309,5 @@ def vis_vae(args, vae_model, context_params, epoch, step, log_dir, global_steps)
                 ax.legend()    
             fig.savefig(os.path.join(vae_path, f'latent_hist_{epoch}_{step}.png'))
             if args.wandb:
-                wandb.log({'latent_in':wandb.Histogram(lin, num_bins = 100)}, step = global_steps)
-                wandb.log({'latent_out':wandb.Histogram(lout, num_bins = 100)}, step = global_steps)
+                wandb.log({f'latent_his': wandb.Image(fig)},step = global_steps)
             plt.close(fig)

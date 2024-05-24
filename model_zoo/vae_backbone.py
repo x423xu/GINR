@@ -463,7 +463,7 @@ class LayerVAE(nn.Module):
         self.prior_ftr0 = nn.Parameter(torch.rand(size=prior_ftr0_size), requires_grad=True)
         self.post_processor = nn.Sequential(
             nn.Conv1d(lcmp[1]*ldmp[1], latent_dim, kernel_size=1, padding=0, stride=1, bias=True),
-            nn.ELU(),
+            # nn.ELU(),
             nn.Linear(latent_channel, input_channel, bias=True),
         )
         if sample_decoder:

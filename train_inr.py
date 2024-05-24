@@ -210,11 +210,15 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
         
         z_dist, kl_all, kl_diag, log_q, log_p = vae_model(latents_input['lin'] if args.vae_norm_in_out else latents_input)
         if args.vae_sample_decoder:
+            if args.vae_norm_in_out:
+                z_dist.mu += latents_input['lmu']
+                z_dist.sigma *= latents_input['lstd']
             z,_ = z_dist.sample()
         else:
             z = z_dist
+            if args.vae_norm_in_out:
+                z = z*latents_input['lstd'] + latents_input['lmu']
         vae_latents = get_vae_out(vae_mode, z, b, nl, ne)
-        vae_latents = vae_latents*latents_input['lstd'] + latents_input['lmu'] if args.vae_norm_in_out else vae_latents
         # get kld loss
         kl_all = torch.stack(kl_all)
         kl_coeff_i, kl_vals = kl_per_group(kl_all)
@@ -384,7 +388,7 @@ def train(args):
                         log_dict.update({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'vae_acc': vae_acc})
                         if args.vae_sample_decoder:
                             log_dict.update({'vae_latent_mse': lmse})
-                    wandb.log(log_dict)
+                    wandb.log(log_dict, step=global_steps)
             if step % args.save_every_n_steps == 0:
                 ind = model_output['model_out'][0]>=0
                 im_show = model_input['coords'][0][ind.squeeze()]

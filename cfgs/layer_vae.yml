@@ -7,4 +7,4 @@ vae_num_heads: 4
 vae_dim_head: 64
 vae_dropout: 0.25
 vae_attn_depth: 2
-vae_norm_in_out: true
+vae_norm_in_out: false
