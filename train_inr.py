@@ -256,9 +256,15 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
         vae_loss.backward()
         nn.utils.clip_grad_norm_(vae_model.parameters(), max_norm=5.)
         vae_optim.step()
+        lmse = None
+        if args.vae_sample_decoder:
+            logp = logp + 0.5 * np.log(2 * np.pi) + torch.log(z_dist.sigma)
+            lmse = -torch.sum(logp, dim=(1,2)) if len(logp.shape) == 3 else -torch.sum(logp, dim=1)
+            lmse = lmse.mean()
+            lmse = lmse.detach().cpu().item()
 
-        return mse_loss.detach().cpu().item(), recon_loss.detach().cpu().item(), kld_loss.detach().cpu().item(), model_output
-    return None, None, None, None
+        return mse_loss.detach().cpu().item(), recon_loss.detach().cpu().item(), kld_loss.detach().cpu().item(), model_output, lmse
+    return None, None, None, None, None
 
 def get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out):
     train_loss = 0.
@@ -353,7 +359,7 @@ def train(args):
             meta_sgd_inner = model.meta_sgd_lrs() if args.use_meta_sgd else None           
             context_params = latents_step(args, model, model_input, gt, context_params, meta_sgd_inner, cache_path, step)      
             model_output, losses = model_update_step(model, model_input, context_params, inr_optim, meta_grad, gt)
-            vae_mse, recon_loss, kld_loss, vae_out = vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, len(train_loader), model_input, gt, vae_loss_avg) 
+            vae_mse, recon_loss, kld_loss, vae_out, lmse = vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, len(train_loader), model_input, gt, vae_loss_avg) 
             if do_intra(args):
                 intra_flag = vae_mse < losses['img_loss'].item()
             '''
@@ -368,12 +374,17 @@ def train(args):
                 description = f'[e{epoch} s{step}/{len(train_loader)}], mse_loss:{all_losses/steps:.4f} PSNR:{all_psnr/steps:.2f} ACC {all_acc/steps:.4f} Ctx-mean:{float(context_params.mean()):.8f}'
                 if args.vae is not None:
                     description += f' VAE-loss:{vae_loss_avg.avg:.4f}, Recon-loss:{recon_loss:.4f}, KLD-loss:{kld_loss:.4f}, VAE_mse_loss:{vae_mse:.4f}, VAE_ACC:{vae_acc:.4f}'
+                    if args.vae_sample_decoder:
+                        description += f' VAE_latent_mse:{lmse:.4f}'
                 logger.info(description)
                 psnr = compute_psnr(model_output['model_out'].cpu() * 0.5 + 0.5, gt['img'].cpu() * 0.5 + 0.5)
                 if args.wandb:
-                    wandb.log({'outer_loss': (all_losses/steps), 'psnr': psnr,'global_step': global_steps, 'acc': all_acc/steps})
+                    log_dict = {'outer_loss': (all_losses/steps), 'psnr': psnr,'global_step': global_steps, 'acc': all_acc/steps}
                     if args.vae is not None:
-                        wandb.log({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'global_step': global_steps, 'vae_acc': vae_acc})
+                        log_dict.update({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'vae_acc': vae_acc})
+                        if args.vae_sample_decoder:
+                            log_dict.update({'vae_latent_mse': lmse})
+                    wandb.log(log_dict)
             if step % args.save_every_n_steps == 0:
                 ind = model_output['model_out'][0]>=0
                 im_show = model_input['coords'][0][ind.squeeze()]
