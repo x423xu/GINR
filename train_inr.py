@@ -260,7 +260,7 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
         return mse_loss.detach().cpu().item(), recon_loss.detach().cpu().item(), kld_loss.detach().cpu().item(), model_output
     return None, None, None, None
 
-def get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps):
+def get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out):
     train_loss = 0.
     for loss_name, loss in losses.items():
         single_loss = loss.mean()
@@ -275,12 +275,18 @@ def get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc
         steps += 1
 
     # voxel accuracy for (latents step)
+    vae_acc = None
     if args.pred_type == 'voxel':
         pred_voxel = model_output['model_out'] >= 0.0 # [non-exist (-1), exists (+1)]
         gt_voxel = gt['img'] >= 0.0
         acc = (pred_voxel == gt_voxel).float().mean()
         all_acc += float(acc) * batch_size
-    return all_losses, all_psnr, all_acc, steps
+    
+        if args.vae is not None:
+            vae_voxel = vae_out['model_out'] >= 0.0 # [non-exist (-1), exists (+1)]
+            gt_voxel = gt['img'] >= 0.0
+            vae_acc = (vae_voxel == gt_voxel).float().mean()
+    return all_losses, all_psnr, all_acc, steps, vae_acc
     
 
 def train(args):
@@ -357,17 +363,17 @@ def train(args):
                 torch.save(context_params.detach().cpu(), os.path.join(cache_path, f'd{step}.pt'))  
             
             # log step       
-            all_losses, all_psnr, all_acc, steps = get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps) 
+            all_losses, all_psnr, all_acc, steps, vae_acc = get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out) 
             if step % args.log_every_n_steps == 0:
-                description = f'[e{epoch} s{step}/{len(train_loader)}], mse_loss:{all_losses/steps:.4f} PSNR:{all_psnr/steps:.2f} Ctx-mean:{float(context_params.mean()):.8f}'
+                description = f'[e{epoch} s{step}/{len(train_loader)}], mse_loss:{all_losses/steps:.4f} PSNR:{all_psnr/steps:.2f} ACC {all_acc/steps:.4f} Ctx-mean:{float(context_params.mean()):.8f}'
                 if args.vae is not None:
-                    description += f' VAE-loss:{vae_loss_avg.avg:.4f}, Recon-loss:{recon_loss:.4f}, KLD-loss:{kld_loss:.4f}, VAE_mse_loss:{vae_mse:.4f}'
+                    description += f' VAE-loss:{vae_loss_avg.avg:.4f}, Recon-loss:{recon_loss:.4f}, KLD-loss:{kld_loss:.4f}, VAE_mse_loss:{vae_mse:.4f}, VAE_ACC:{vae_acc:.4f}'
                 logger.info(description)
                 psnr = compute_psnr(model_output['model_out'].cpu() * 0.5 + 0.5, gt['img'].cpu() * 0.5 + 0.5)
                 if args.wandb:
-                    wandb.log({'outer_loss': (all_losses/steps), 'psnr': psnr,'global_step': global_steps})
+                    wandb.log({'outer_loss': (all_losses/steps), 'psnr': psnr,'global_step': global_steps, 'acc': all_acc/steps})
                     if args.vae is not None:
-                        wandb.log({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'global_step': global_steps})
+                        wandb.log({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'global_step': global_steps, 'vae_acc': vae_acc})
             if step % args.save_every_n_steps == 0:
                 ind = model_output['model_out'][0]>=0
                 im_show = model_input['coords'][0][ind.squeeze()]
