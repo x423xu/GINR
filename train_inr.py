@@ -180,11 +180,6 @@ def latents_step(args, model, model_input, gt, context_params, meta_sgd_inner, c
             context_params = context_params - args.lr_inner * (meta_sgd_inner * grad_inner)
         else:
             context_params = context_params - args.lr_inner * grad_inner
-    '''
-    We cache the latents after it is updated.
-    '''
-    if args.cache_latents:
-        torch.save(context_params.detach().cpu(), os.path.join(cache_path, f'd{step}.pt'))
     return context_params
 
 def model_update_step(model, model_input, context_params, inr_optim, meta_grad, gt):
@@ -208,50 +203,17 @@ def model_update_step(model, model_input, context_params, inr_optim, meta_grad, 
 def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_epoch, model_input, gt, vae_loss_avg):
     '''
     for different inr models and different vae models, the shape of latent is different. Please refer to the paper for details.
-    '''
-    def _get_vae_mode(args):
-        mode_mapping= {
-            'functa': '0',
-            'mnif': '1',
-            'inr_loe': '2',
-            'hierarchical_vae': '0',
-            'layer_vae': '1',     
-        }
-        mode = mode_mapping[args.model_type]+mode_mapping[args.vae]
-        return mode
-            
+    '''            
     if args.vae is not None:
         # get gt latents for vae
-        vae_mode = _get_vae_mode(args)
-        if vae_mode == '00' or vae_mode =='10':
-            latents = context_params.data.clone()
-            latents_input = latents.unsqueeze(1)
-        elif vae_mode == '01' or vae_mode == '11':
-            latents = context_params.data.clone()
-            b, _ = latents.size()
-            latents_input = latents.contiguous().view(b, args.depth, args.hidden_features//args.depth)
-        elif vae_mode == '20':
-            latents = context_params.data.clone()
-            b, nl, ne = latents.size()
-            latents_input = latents.contiguous().view(b, 1, -1)
-        elif vae_mode == '21':
-            latents = context_params.data.clone()
-            b, nl, ne = latents.size()
-            latents_input = latents
-        else:
-            raise NotImplementedError
+        vae_mode, latents, latents_input, b, nl, ne = get_vae_in(args, context_params)
         
         z_dist, kl_all, kl_diag, log_q, log_p = vae_model(latents_input)
         if args.vae_sample_decoder:
             z,_ = z_dist.sample()
         else:
             z = z_dist
-        vae_latents = z.squeeze(-1)
-        if vae_mode == '01' or vae_mode=='11':
-            b, _, _ = vae_latents.size()
-            vae_latents = vae_latents.contiguous().view(b, -1)
-        elif vae_mode == '20':
-            vae_latents = vae_latents.contiguous().view(b, nl, ne)
+        vae_latents = get_vae_out(args, z,b, nl, ne)
 
         # get kld loss
         kl_all = torch.stack(kl_all)
@@ -348,6 +310,8 @@ def train(args):
             for name, param in model.get_named_parameters():
                 param = keep_params[name].clone()
 
+    if do_intra(args):
+        intra_flag = False
     for epoch in range(start_epoch, args.epochs):
         all_losses, all_psnr, all_acc, steps = 0.0, 0.0, 0.0, 0
         vae_loss_avg = AverageValueMeter() if args.vae is not None else None
@@ -369,10 +333,25 @@ def train(args):
             else:
                 context_params = model.get_context_params(batch_size, args.eval)
             
+            if do_intra(args) and intra_flag:
+                with torch.no_grad():
+                    vae_mode, lts, vin, b, nl, ne = get_vae_in(args, context_params)
+                    z = vae_model(vin)[0]
+                    vae_ctx_gen = get_vae_out(args, z, b, nl, ne)
+                context_params.data = vae_ctx_gen.data
+                intra_flag = False
+            
             meta_sgd_inner = model.meta_sgd_lrs() if args.use_meta_sgd else None           
             context_params = latents_step(args, model, model_input, gt, context_params, meta_sgd_inner, cache_path, step)      
             model_output, losses = model_update_step(model, model_input, context_params, inr_optim, meta_grad, gt)
-            vae_mse, recon_loss, kld_loss, vae_out = vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, len(train_loader), model_input, gt, vae_loss_avg)   
+            vae_mse, recon_loss, kld_loss, vae_out = vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, len(train_loader), model_input, gt, vae_loss_avg) 
+            if do_intra(args):
+                intra_flag = vae_mse < losses['img_loss'].item()
+            '''
+            We cache the latents after it is updated.
+            '''
+            if args.cache_latents:
+                torch.save(context_params.detach().cpu(), os.path.join(cache_path, f'd{step}.pt'))  
             
             # log step       
             all_losses, all_psnr, all_acc, steps = get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps) 
@@ -399,6 +378,7 @@ def train(args):
                         {'VAE_out': vae_show.detach().cpu().numpy()}
                     )
                 plot_single_pcd(plot_dict, '{}/point_cloud_e{}s{}.png'.format(img_path,epoch, step))
+            vis_vae(args, vae_model, context_params, epoch, step, log_dir, global_steps)
             global_steps += 1
             
         inr_scheduler.step()

@@ -18,9 +18,10 @@ parser.add_argument('--batch_size', type=int, default=8)
 parser.add_argument('--eval', action='store_true', default=False)
 parser.add_argument('--lr_outer', type=float, default=0.0001, help='learning rate')
 parser.add_argument('--inner_steps', type=int, default=3, help='number of inner steps for each coords')
-parser.add_argument('--lr_inner', type=float, default=1e-4, help='learning rate for inner loop')
+parser.add_argument('--lr_inner', type=float, default=1.0, help='learning rate for inner loop')
 parser.add_argument('--cache_latents', action='store_true', default=False, help = 'training with cached latents')
 parser.add_argument('--resume_from', type=str, default=None, help='The path where the resumed training starts from')
+parser.add_argument('--intra_latent', action='store_true', default=False, help='inr training with intra latents, this should work together with cache_latents=True')
 
 # ddp training params
 parser.add_argument('--ddp', action='store_true', default=False)
@@ -42,6 +43,7 @@ parser.add_argument('--log_every_n_steps', type=int, default=10)
 parser.add_argument('--ckpt_every_n_epochs', type=int, default=1)
 parser.add_argument('--save_every_n_steps', type=int, default=100)
 parser.add_argument('--tag', type=str, default=None, help='extra tag for wandb')
+parser.add_argument('--vis_vae_every_n_steps', type=int, default=-1, help='visualize vae every n steps. only for debugging')
 
 # vae params
 parser.add_argument('--vae', type=str, default=None, choices=[None, 'simple_vae', 'hierarchical_vae', 'layer_vae'], help = 'Which vae to use')
@@ -73,3 +75,7 @@ if args.vae is not None:
     for key, value in vae_config.items():
         if getattr(args, key, None) == parser.get_default(key):
             setattr(args, key, value)
+
+# make cache_latents and intra_latent work together
+if args.intra_latent:
+    args.cache_latents = True

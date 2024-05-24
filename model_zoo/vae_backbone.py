@@ -479,7 +479,7 @@ class LayerVAE(nn.Module):
     def forward(self, z_in, return_meta = False):
         # the z_in should be of shape (b, n, L) = (batch_size, num_layers, latents_length)
         batch_size, num_layers, latent_dim  = z_in.size()
-        z_in = z_in.view(batch_size*num_layers, 1, latent_dim)
+        z_in = z_in.reshape(batch_size*num_layers, 1, latent_dim)
         # s1. we want to get posterior zn,...,z2,z1,z0 -> z0,z1,z2,...,zn
         z_n = self.pre_processor(z_in)
         z_n = rearrange(z_n, '(b n) l d -> b n l d', b=batch_size, n=num_layers)

@@ -224,3 +224,68 @@ def load_random_states(state_dict):
     
     if torch.cuda.is_available() and 'torch_cuda_random_state' in state_dict:
         torch.cuda.set_rng_state(state_dict['torch_cuda_random_state'])
+
+def do_intra(args):
+    if args.intra_latent and args.vae is not None:
+        return True
+    else:
+        return False
+
+def get_vae_in(args, context_params):
+        mode_mapping= {
+            'functa': '0',
+            'mnif': '1',
+            'inr_loe': '2',
+            'hierarchical_vae': '0',
+            'layer_vae': '1',     
+        }
+        b, nl, ne = None, None, None
+        vae_mode = mode_mapping[args.model_type]+mode_mapping[args.vae]
+        if vae_mode == '00' or vae_mode =='10':
+            latents = context_params.data.clone()
+            latents_input = latents.unsqueeze(1)
+        elif vae_mode == '01' or vae_mode == '11':
+            latents = context_params.data.clone()
+            b, _ = latents.size()
+            latents_input = latents.contiguous().view(b, args.depth, args.hidden_features//args.depth)
+        elif vae_mode == '20':
+            latents = context_params.data.clone()
+            b, nl, ne = latents.size()
+            latents_input = latents.contiguous().view(b, 1, -1)
+        elif vae_mode == '21':
+            latents = context_params.data.clone()
+            b, nl, ne = latents.size()
+            latents_input = latents
+        else:
+            raise NotImplementedError
+        return vae_mode, latents, latents_input, b, nl, ne
+
+def get_vae_out(vae_mode, z, b, nl, ne):
+    vae_latents = z.squeeze(-1)
+    if vae_mode == '01' or vae_mode=='11':
+        vae_latents = vae_latents.contiguous().view(b, -1)
+    elif vae_mode == '20':
+        vae_latents = vae_latents.contiguous().view(b, nl, ne)
+    return vae_latents
+
+@torch.no_grad()
+def vis_vae(args, vae_model, context_params, epoch, step, log_dir, global_steps):
+    if args.vis_vae_every_n_steps and args.vae is not None:
+        vae_path = os.path.join(log_dir, 'vis_vae')
+        if not os.path.exists(vae_path):
+            os.makedirs(vae_path)     
+        if step % args.vis_vae_every_n_steps == 0:
+            vae_mode, latents, latents_input, _,_,_ = get_vae_in(args, context_params)
+            out_dist, kl_all, all_q, all_p, all_log_q, all_log_p = vae_model(latents_input, return_meta = True)
+            lin = latents_input.squeeze().flatten().cpu().numpy()
+            lout = out_dist.squeeze().flatten().cpu().numpy()
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            ax.hist(lin, bins=100, alpha=0.5, label='latent_in', color='r')
+            ax.hist(lout, bins=100, alpha=0.5, label='latent_out', color='b')
+            ax.legend()
+            fig.savefig(os.path.join(vae_path, f'latent_hist_{epoch}_{step}.png'))
+            if args.wandb:
+                wandb.log({'latent_in':wandb.Histogram(lin, num_bins = 100)}, step = global_steps)
+                wandb.log({'latent_out':wandb.Histogram(lout, num_bins = 100)}, step = global_steps)
+            plt.close(fig)
