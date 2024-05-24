@@ -15,7 +15,7 @@ outermost_linear: True
 sampling: null
 pred_type: voxel
 std_latent: 0.0001
-norm_latents: False
+norm_latents: false
 top_k: false
 pos_emb: null
 ffm_map_scale: 16

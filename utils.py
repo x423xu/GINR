@@ -277,8 +277,12 @@ def vis_vae(args, vae_model, context_params, epoch, step, log_dir, global_steps)
         if step % args.vis_vae_every_n_steps == 0:
             vae_mode, latents, latents_input, _,_,_ = get_vae_in(args, context_params)
             out_dist, kl_all, all_q, all_p, all_log_q, all_log_p = vae_model(latents_input, return_meta = True)
+            if args.vae_sample_decoder:
+                z,_ = out_dist.sample()
+            else:
+                z = out_dist
             lin = latents_input.squeeze().flatten().cpu().numpy()
-            lout = out_dist.squeeze().flatten().cpu().numpy()
+            lout = z.squeeze().flatten().cpu().numpy()
             fig = plt.figure()
             ax = fig.add_subplot(111)
             ax.hist(lin, bins=100, alpha=0.5, label='latent_in', color='r')

@@ -213,7 +213,7 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
             z,_ = z_dist.sample()
         else:
             z = z_dist
-        vae_latents = get_vae_out(args, z,b, nl, ne)
+        vae_latents = get_vae_out(vae_mode, z, b, nl, ne)
 
         # get kld loss
         kl_all = torch.stack(kl_all)
@@ -226,7 +226,9 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
 
         # get reconstruction loss
         if args.vae_sample_decoder:
-            recon_loss = z_dist.log_prob(latents)
+            logp = z_dist.log_p(latents)
+            recon_loss = -torch.sum(logp, dim=(1,2)) if len(logp.shape) == 3 else -torch.sum(logp, dim=1)
+            recon_loss = recon_loss.mean()
         else:
             recon_loss = nn.functional.mse_loss(vae_latents, latents,reduction='sum')
         
@@ -337,7 +339,7 @@ def train(args):
                 with torch.no_grad():
                     vae_mode, lts, vin, b, nl, ne = get_vae_in(args, context_params)
                     z = vae_model(vin)[0]
-                    vae_ctx_gen = get_vae_out(args, z, b, nl, ne)
+                    vae_ctx_gen = get_vae_out(vae_mode, z, b, nl, ne)
                 context_params.data = vae_ctx_gen.data
                 intra_flag = False
             

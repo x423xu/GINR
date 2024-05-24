@@ -553,7 +553,7 @@ class LayerVAE(nn.Module):
 
         # Sample decoder or not: True for a learned std, False for a prior std of 1
         if self.sample_decoder:
-            z_mu, z_sigma = self.dist_embedding(out_tensor)
+            z_mu, z_sigma = self.dist_embedding(out_tensor.squeeze(-1))
             out_dist = Normal(z_mu, z_sigma)
         else:
             out_dist = out_tensor
