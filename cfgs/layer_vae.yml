@@ -1,10 +1,10 @@
 vae_input_channel: 1
 vae_latent_channel: 64
 vae_sampler_dim: 40
-vae_prior_scale: 0.0001
+vae_prior_scale: 1.0
 vae_sample_decoder: false
 vae_num_heads: 4
 vae_dim_head: 64
 vae_dropout: 0.25
 vae_attn_depth: 2
-vae_norm_in_out: false
+vae_norm_in_out: true

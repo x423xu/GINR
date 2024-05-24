@@ -210,15 +210,13 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
         
         z_dist, kl_all, kl_diag, log_q, log_p = vae_model(latents_input['lin'] if args.vae_norm_in_out else latents_input)
         if args.vae_sample_decoder:
-            if args.vae_norm_in_out:
-                z_dist.mu += latents_input['lmu']
-                z_dist.sigma *= latents_input['lstd']
             z,_ = z_dist.sample()
         else:
             z = z_dist
-            if args.vae_norm_in_out:
-                z = z*latents_input['lstd'] + latents_input['lmu']
+            
         vae_latents = get_vae_out(vae_mode, z, b, nl, ne)
+        if args.vae_norm_in_out:
+            vae_latents = vae_latents*latents_input['lstd'] + latents_input['lmu']
         # get kld loss
         kl_all = torch.stack(kl_all)
         kl_coeff_i, kl_vals = kl_per_group(kl_all)
