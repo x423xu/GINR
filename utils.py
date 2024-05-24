@@ -258,7 +258,19 @@ def get_vae_in(args, context_params):
             latents_input = latents
         else:
             raise NotImplementedError
-        return vae_mode, latents, latents_input, b, nl, ne
+        if args.vae_norm_in_out:
+            dims_to_reduce = tuple(range(1, latents_input.dim()))
+            lmu = latents_input.mean(dim=dims_to_reduce, keepdim=True)
+            lstd = latents_input.std(dim=dims_to_reduce, keepdim=True)+1e-7
+            latents_input = (latents_input - lmu) / lstd
+            in_dict = {
+                'lin': latents_input,
+                'lmu': lmu,
+                'lstd': lstd
+            }
+        else:
+            in_dict = latents_input
+        return vae_mode, latents, in_dict, b, nl, ne
 
 def get_vae_out(vae_mode, z, b, nl, ne):
     vae_latents = z.squeeze(-1)
@@ -276,18 +288,25 @@ def vis_vae(args, vae_model, context_params, epoch, step, log_dir, global_steps)
             os.makedirs(vae_path)     
         if step % args.vis_vae_every_n_steps == 0:
             vae_mode, latents, latents_input, _,_,_ = get_vae_in(args, context_params)
+            if args.vae_norm_in_out:
+                latents_input = latents_input['lin']
             out_dist, kl_all, all_q, all_p, all_log_q, all_log_p = vae_model(latents_input, return_meta = True)
             if args.vae_sample_decoder:
                 z,_ = out_dist.sample()
             else:
                 z = out_dist
-            lin = latents_input.squeeze().flatten().cpu().numpy()
-            lout = z.squeeze().flatten().cpu().numpy()
-            fig = plt.figure()
-            ax = fig.add_subplot(111)
-            ax.hist(lin, bins=100, alpha=0.5, label='latent_in', color='r')
-            ax.hist(lout, bins=100, alpha=0.5, label='latent_out', color='b')
-            ax.legend()
+            lin = latents_input.squeeze().cpu().numpy()
+            lout = z.squeeze().cpu().numpy()
+            num_axs = lin.shape[1]
+            fig, axs = plt.subplots(1, num_axs, figsize=(num_axs*3, 3))
+            for i in range(num_axs):
+                if num_axs == 1:
+                    ax = axs
+                else:
+                    ax = axs[i]
+                ax.hist(lin[:,i].reshape(-1), bins=100, alpha=0.5, label=f'latent_in_l{i+1}', color='r')
+                ax.hist(lout[:,i].reshape(-1), bins=100, alpha=0.5, label=f'latent_out_l{i+1}', color='b')
+                ax.legend()    
             fig.savefig(os.path.join(vae_path, f'latent_hist_{epoch}_{step}.png'))
             if args.wandb:
                 wandb.log({'latent_in':wandb.Histogram(lin, num_bins = 100)}, step = global_steps)

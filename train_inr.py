@@ -206,15 +206,15 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
     '''            
     if args.vae is not None:
         # get gt latents for vae
-        vae_mode, latents, latents_input, b, nl, ne = get_vae_in(args, context_params)
+        vae_mode, latents_gt, latents_input, b, nl, ne = get_vae_in(args, context_params)
         
-        z_dist, kl_all, kl_diag, log_q, log_p = vae_model(latents_input)
+        z_dist, kl_all, kl_diag, log_q, log_p = vae_model(latents_input['lin'] if args.vae_norm_in_out else latents_input)
         if args.vae_sample_decoder:
             z,_ = z_dist.sample()
         else:
             z = z_dist
         vae_latents = get_vae_out(vae_mode, z, b, nl, ne)
-
+        vae_latents = vae_latents*latents_input['lstd'] + latents_input['lmu'] if args.vae_norm_in_out else vae_latents
         # get kld loss
         kl_all = torch.stack(kl_all)
         kl_coeff_i, kl_vals = kl_per_group(kl_all)
@@ -226,11 +226,11 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
 
         # get reconstruction loss
         if args.vae_sample_decoder:
-            logp = z_dist.log_p(latents)
+            logp = z_dist.log_p(latents_gt)
             recon_loss = -torch.sum(logp, dim=(1,2)) if len(logp.shape) == 3 else -torch.sum(logp, dim=1)
             recon_loss = recon_loss.mean()
         else:
-            recon_loss = nn.functional.mse_loss(vae_latents, latents,reduction='sum')
+            recon_loss = nn.functional.mse_loss(vae_latents, latents_gt,reduction='sum')
         
         # do not calculate the gradient for the model
         with torch.no_grad():
@@ -337,9 +337,10 @@ def train(args):
             
             if do_intra(args) and intra_flag:
                 with torch.no_grad():
-                    vae_mode, lts, vin, b, nl, ne = get_vae_in(args, context_params)
-                    z = vae_model(vin)[0]
+                    vae_mode, vgt, vin, b, nl, ne = get_vae_in(args, context_params)
+                    z = vae_model(vin['lin'] if args.vae_norm_in_out else vin)[0]
                     vae_ctx_gen = get_vae_out(vae_mode, z, b, nl, ne)
+                    vae_ctx_gen = vae_ctx_gen*vin['lstd'] + vin['lmu'] if args.vae_norm_in_out else vae_ctx_gen
                 context_params.data = vae_ctx_gen.data
                 intra_flag = False
             
