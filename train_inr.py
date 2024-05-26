@@ -215,8 +215,8 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
             z = z_dist
             
         vae_latents = get_vae_out(vae_mode, z, b, nl, ne)
-        if args.vae_norm_in_out:
-            vae_latents = vae_latents*latents_input['lstd'] + latents_input['lmu']
+        # if args.vae_norm_in_out:
+        #     vae_latents = vae_latents*latents_input['lstd'] + latents_input['lmu']
         # get kld loss
         kl_all = torch.stack(kl_all)
         kl_coeff_i, kl_vals = kl_per_group(kl_all)
@@ -232,8 +232,11 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
             recon_loss = -torch.sum(logp, dim=(1,2)) if len(logp.shape) == 3 else -torch.sum(logp, dim=1)
             recon_loss = recon_loss.mean()
         else:
-            recon_loss = nn.functional.mse_loss(vae_latents, latents_gt,reduction='sum')
+            # recon_loss = nn.functional.mse_loss(vae_latents, latents_gt,reduction='sum')
+            recon_loss = nn.functional.mse_loss(vae_latents, latents_input['lin'],reduction='sum')
         
+        if args.vae_norm_in_out:
+            vae_latents = vae_latents*latents_input['lstd'] + latents_input['lmu']
         # do not calculate the gradient for the model
         with torch.no_grad():
             model_output = model(model_input, vae_latents)
@@ -268,7 +271,7 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
         return mse_loss.detach().cpu().item(), recon_loss.detach().cpu().item(), kld_loss.detach().cpu().item(), model_output, lmse
     return None, None, None, None, None
 
-def get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out):
+def get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out, all_vae_acc, all_vae_mse):
     train_loss = 0.
     for loss_name, loss in losses.items():
         single_loss = loss.mean()
@@ -294,7 +297,8 @@ def get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc
             vae_voxel = vae_out['model_out'] >= 0.0 # [non-exist (-1), exists (+1)]
             gt_voxel = gt['img'] >= 0.0
             vae_acc = (vae_voxel == gt_voxel).float().mean()
-    return all_losses, all_psnr, all_acc, steps, vae_acc
+            all_vae_acc += float(vae_acc) * batch_size
+    return all_losses, all_psnr, all_acc, steps, all_vae_acc
     
 
 def train(args):
@@ -330,6 +334,7 @@ def train(args):
         intra_flag = False
     for epoch in range(start_epoch, args.epochs):
         all_losses, all_psnr, all_acc, steps = 0.0, 0.0, 0.0, 0
+        all_vae_acc, all_vae_mse = 0.0, 0.0
         vae_loss_avg = AverageValueMeter() if args.vae is not None else None
         for step, (model_input_batch, gt_batch) in enumerate(train_loader):
             # prepare data
@@ -371,11 +376,11 @@ def train(args):
                 torch.save(context_params.detach().cpu(), os.path.join(cache_path, f'd{step}.pt'))  
             
             # log step       
-            all_losses, all_psnr, all_acc, steps, vae_acc = get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out) 
+            all_losses, all_psnr, all_acc, steps, all_vae_acc = get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out, all_vae_acc, all_vae_mse) 
             if step % args.log_every_n_steps == 0:
                 description = f'[e{epoch} s{step}/{len(train_loader)}], mse_loss:{all_losses/steps:.4f} PSNR:{all_psnr/steps:.2f} ACC {all_acc/steps:.4f} Ctx-mean:{float(context_params.mean()):.8f}'
                 if args.vae is not None:
-                    description += f' VAE-loss:{vae_loss_avg.avg:.4f}, Recon-loss:{recon_loss:.4f}, KLD-loss:{kld_loss:.4f}, VAE_mse_loss:{vae_mse:.4f}, VAE_ACC:{vae_acc:.4f}'
+                    description += f' VAE-loss:{vae_loss_avg.avg:.4f}, Recon-loss:{recon_loss:.4f}, KLD-loss:{kld_loss:.4f}, VAE_mse_loss:{vae_mse:.4f}, VAE_ACC:{all_vae_acc/steps:.4f}'
                     if args.vae_sample_decoder:
                         description += f' VAE_latent_mse:{lmse:.4f}'
                 logger.info(description)
@@ -383,7 +388,7 @@ def train(args):
                 if args.wandb:
                     log_dict = {'outer_loss': (all_losses/steps), 'psnr': psnr,'global_step': global_steps, 'acc': all_acc/steps}
                     if args.vae is not None:
-                        log_dict.update({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'vae_acc': vae_acc})
+                        log_dict.update({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'vae_acc': all_vae_acc/steps})
                         if args.vae_sample_decoder:
                             log_dict.update({'vae_latent_mse': lmse})
                     wandb.log(log_dict, step=global_steps)

@@ -396,6 +396,9 @@ class LayerVAE(nn.Module):
                  latent_dim = 1024):
         super(LayerVAE, self).__init__()
         num_layers = len(layers) # How many layers for encoder/decoder tower
+        tower_length = num_layers + 2
+        self.tower_length = tower_length
+        layers = layers + [layers[-1]]*2
 
         self.prior_scale = prior_scale # prior sclae for generating latents: in our experience, 1e-4 is a good choice.
         self.num_layers = num_layers
@@ -418,7 +421,8 @@ class LayerVAE(nn.Module):
             layer 3: C -> C
             layer n > 3: C -> C
         '''
-        for n in range(num_layers):
+        # for n in range(num_layers):
+        for n in range(tower_length):
             Cin = latent_channel
             Cout = latent_channel
             self.encoder_tower.append(AttnCell(dim=Cin, depth = int(layers[n]), heads = num_heads, dim_head = dim_head, mlp_dim = Cin,out_dim=Cout, dropout=dropout)) 
@@ -434,12 +438,14 @@ class LayerVAE(nn.Module):
             layer 2: C -> C
             layer 1: C -> C
         '''
-        for n in range(num_layers):
+        # for n in range(num_layers):
+        for n in range(tower_length):
             Cin = latent_channel
             Cout = latent_channel
             self.decoder_tower.append(AttnCell(dim=Cin, depth = int(layers[n]), heads = num_heads, dim_head = dim_head, mlp_dim = Cin,out_dim=Cout, dropout=dropout))
             self.dec_combiners.append(DecCombinerCell(sampler_dim//2, Cin, Cin))
-            if n<num_layers-1: # As the NVAE, the number of decoder equals the number of encoder minus 1
+            # if n<num_layers-1: # As the NVAE, the number of decoder equals the number of encoder minus 1
+            if n<tower_length-1:
                 self.dec_sampler.append(nn.Sequential(nn.Linear(Cout, sampler_dim, bias=True)))
         
         self.enc_0 = nn.Sequential(
@@ -485,10 +491,16 @@ class LayerVAE(nn.Module):
         z_n = rearrange(z_n, '(b n) l d -> b n l d', b=batch_size, n=num_layers)
         z_posterior = []
         z_enc_combiners = []
-        for n in range(self.num_layers):
-            z_enc = self.encoder_tower[n](z_n[:,n,...]) # (b, L, 64->64->64->64)
-            z_posterior.append(z_enc)
-            z_enc_combiners.append(self.enc_combiners[n])
+        # for n in range(self.num_layers):
+        for n in range(self.tower_length):
+            if n<self.num_layers:
+                z_enc = self.encoder_tower[n](z_n[:,self.num_layers-n-1,...]) # (b, L, 64->64->64->64)
+                z_posterior.append(z_enc)
+                z_enc_combiners.append(self.enc_combiners[n])
+            else:
+                z_enc = self.encoder_tower[n](z_enc)
+                z_posterior.append(z_enc)
+                z_enc_combiners.append(self.enc_combiners[n])
         z_posterior.reverse()
         z_enc_combiners.reverse()
 
@@ -517,9 +529,10 @@ class LayerVAE(nn.Module):
         s = s.expand(batch_size, -1, -1)
         s = self.dec_combiners[0](s, z)
         s = self.decoder_tower[0](s)
-        out_tensor = [s]
+        
         # s4. get the combined posterior from the features of generative model
-        for n in range(1,self.num_layers):     
+        # for n in range(1,self.num_layers):   
+        for n in range(1,self.tower_length):  
             # a1. get prior
             param = self.dec_sampler[n-1](s)
             mu_p, log_sigma_p = torch.chunk(param, 2, dim=2)
@@ -543,7 +556,10 @@ class LayerVAE(nn.Module):
             # a3. combine posterior with prior features
             s = self.dec_combiners[n](s, z)
             s = self.decoder_tower[n](s)
-            out_tensor.append(s)
+            if n==(self.tower_length-self.num_layers):
+                out_tensor=[s]
+            if n>(self.tower_length-self.num_layers):
+                out_tensor.append(s)
 
         # the last combined s is sent to post_processor
         out_tensor = torch.stack(out_tensor)

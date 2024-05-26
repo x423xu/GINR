@@ -163,3 +163,4 @@ logs/
 logs*
 .vscode*
 *wandb*
+notebooks/
