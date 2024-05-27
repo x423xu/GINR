@@ -154,9 +154,12 @@ def make_wandb(args, tm_str):
         else:
             wandb.init(entity='xxy', project='ginr', dir=args.log_dir, config = args, tags=tags, notes=descriptions, id = tm_str, name = tm_str)
 
-def image_mse(mask, model_output, gt):
+def image_mse(mask, model_output, gt, reduction='mean'):
     if mask is None:
-        return {'img_loss': ((model_output['model_out'] - gt['img']) ** 2).mean()}
+        if reduction == 'mean':
+            return {'img_loss': ((model_output['model_out'] - gt['img']) ** 2).mean()}
+        elif reduction == 'sum':
+            return {'img_loss': ((model_output['model_out'] - gt['img']) ** 2).sum()}
     else:
         return {'img_loss': (mask * (model_output['model_out'] - gt['img']) ** 2).mean()}
     

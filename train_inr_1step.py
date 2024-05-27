@@ -200,7 +200,7 @@ def model_update_step(model, model_input, context_params, inr_optim, meta_grad, 
     inr_optim.step()
     return model_output, losses
 
-def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_epoch, model_input, gt, vae_loss_avg):
+def vae_step(args, model, vae_model, vae_optim,inr_optim, context_params, epoch, step, l_epoch, model_input, gt, vae_loss_avg):
     '''
     for different inr models and different vae models, the shape of latent is different. Please refer to the paper for details.
     '''            
@@ -239,8 +239,8 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
         if args.vae_norm_in_out:
             vae_latents = vae_latents*latents_input['lstd'] + latents_input['lmu']
         # do not calculate the gradient for the model
-        with torch.no_grad():
-            model_output = model(model_input, vae_latents)
+        # with torch.no_grad():
+        model_output = model(model_input, vae_latents)
         mse_loss = image_mse(None, model_output, gt)['img_loss']
         
         # get kld coefficient
@@ -248,6 +248,8 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
             kl_ratio = args.kl_r_max*(step+epoch%args.warmup_epochs*l_epoch)/(args.warmup_epochs*l_epoch)                
         elif epoch%args.annealing_every_n_epochs < args.annealing_every_n_epochs:
             kl_ratio = args.kl_r_max
+        # if epoch == 0:
+        #     kl_ratio = 0.0
         vae_loss = 0.0
         for l in args.vae_loss_type.split('+'):
             weight, loss_name = l.split('*')
@@ -259,47 +261,15 @@ def vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, l_e
                 vae_loss += float(weight) * mse_loss
         vae_loss_avg.update(vae_loss.item())
         vae_optim.zero_grad()
+        inr_optim.zero_grad()
         vae_loss.backward()
         nn.utils.clip_grad_norm_(vae_model.parameters(), max_norm=5.)
+        nn.utils.clip_grad_norm_(model.get_parameters(), max_norm=5.)
         vae_optim.step()
-        lmse = None
-        if args.vae_sample_decoder:
-            logp = logp + 0.5 * np.log(2 * np.pi) + torch.log(z_dist.sigma)
-            lmse = -torch.sum(logp, dim=(1,2)) if len(logp.shape) == 3 else -torch.sum(logp, dim=1)
-            lmse = lmse.mean()
-            lmse = lmse.detach().cpu().item()
+        inr_optim.step()
 
-        return mse_loss.detach().cpu().item(), recon_loss.detach().cpu().item(), kld_loss.detach().cpu().item(), model_output, lmse
-    return None, None, None, None, None
-
-def get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out, all_vae_acc, all_vae_mse):
-    train_loss = 0.
-    for loss_name, loss in losses.items():
-        single_loss = loss.mean()
-        train_loss += single_loss.cpu()
-    all_losses += float(train_loss) * batch_size
-    # PSNR for (latents step)
-    for pred_img, gt_img in zip(model_output['model_out'].cpu(), gt['img'].cpu()):
-        if args.pred_type == 'voxel':
-            psnr = compute_psnr(pred_img * 0.5 + 0.5, gt_img * 0.5 + 0.5) # rescale from [-1, 1] to [0, 1]
-                
-        all_psnr += psnr
-        steps += 1
-
-    # voxel accuracy for (latents step)
-    vae_acc = None
-    if args.pred_type == 'voxel':
-        pred_voxel = model_output['model_out'] >= 0.0 # [non-exist (-1), exists (+1)]
-        gt_voxel = gt['img'] >= 0.0
-        acc = (pred_voxel == gt_voxel).float().mean()
-        all_acc += float(acc) * batch_size
-    
-        if args.vae is not None:
-            vae_voxel = vae_out['model_out'] >= 0.0 # [non-exist (-1), exists (+1)]
-            gt_voxel = gt['img'] >= 0.0
-            vae_acc = (vae_voxel == gt_voxel).float().mean()
-            all_vae_acc += float(vae_acc) * batch_size
-    return all_losses, all_psnr, all_acc, steps, all_vae_acc
+        return recon_loss.detach().cpu().item(), kld_loss.detach().cpu().item(), mse_loss.detach().cpu().item(),model_output
+    return None, None, None, None
     
 
 def train(args):
@@ -315,7 +285,7 @@ def train(args):
     cache_path = make_cache(args, log_dir)
 
     '''training configuration steps'''
-    make_wandb(args, tm_str)
+    make_wandb(args, '1S'+tm_str)
     train_loader = get_data(args)
     model, vae_model, keep_params, meta_grad_init = get_model(args, ckpt)
     logger.info(model) if args.resume_from is None else logger.info('Resume training from {}'.format(args.resume_from))
@@ -334,16 +304,15 @@ def train(args):
     if do_intra(args):
         intra_flag = False
     for epoch in range(start_epoch, args.epochs):
-        all_losses, all_psnr, all_acc, steps = 0.0, 0.0, 0.0, 0
-        all_vae_acc, all_vae_mse = 0.0, 0.0
-        vae_loss_avg = AverageValueMeter() if args.vae is not None else None
+        all_vae_acc, all_vae_recon,all_vae_kld, vae_loss_avg = AverageValueMeter(), AverageValueMeter(), AverageValueMeter(),AverageValueMeter()
+        all_psnr = AverageValueMeter()
+        all_mse = AverageValueMeter()
         for step, (model_input_batch, gt_batch) in enumerate(train_loader):
             # prepare data
             model_input, gt = model_input_batch, gt_batch
             model_input = {key: value.cuda() for key, value in model_input.items()}
             gt = {key: value.cuda() for key, value in gt.items()}
             batch_size = gt['img'].size(0)
-            meta_grad = copy.deepcopy(meta_grad_init)
             '''
             We use the cached latents if the cache_latents is True. In the first epoch, latents are initialized as randn.
             Note: if the cache_latents is True, the training data cannot be shuffled.
@@ -354,6 +323,7 @@ def train(args):
                 context_params.requires_grad_()
             else:
                 context_params = model.get_context_params(batch_size, args.eval)
+            # context_params.requires_grad_(False)
             
             if do_intra(args) and intra_flag:
                 with torch.no_grad():
@@ -364,49 +334,33 @@ def train(args):
                 context_params.data = vae_ctx_gen.data
                 intra_flag = False
             
-            meta_sgd_inner = model.meta_sgd_lrs() if args.use_meta_sgd else None           
-            context_params = latents_step(args, model, model_input, gt, context_params, meta_sgd_inner, cache_path, step)      
-            model_output, losses = model_update_step(model, model_input, context_params, inr_optim, meta_grad, gt)
-            vae_mse, recon_loss, kld_loss, vae_out, lmse = vae_step(args, model, vae_model, vae_optim, context_params, epoch, step, len(train_loader), model_input, gt, vae_loss_avg) 
-            if do_intra(args):
-                intra_flag = vae_mse < losses['img_loss'].item()
-            '''
-            We cache the latents after it is updated.
-            '''
-            if args.cache_latents:
-                torch.save(context_params.detach().cpu(), os.path.join(cache_path, f'd{step}.pt'))  
+            meta_sgd_inner = model.meta_sgd_lrs() if args.use_meta_sgd else None
+            context_params = latents_step(args, model, model_input, gt, context_params, meta_sgd_inner, cache_path, step)
+            recon_loss, kld_loss, mse_loss, vae_out = vae_step(args, model, vae_model, vae_optim,inr_optim, context_params, epoch, step, len(train_loader), model_input, gt, vae_loss_avg) 
+            all_vae_recon.update(recon_loss)
+            all_vae_kld.update(kld_loss)
             
             # log step       
-            all_losses, all_psnr, all_acc, steps, all_vae_acc = get_logs(losses, batch_size, model_output, gt, all_losses, all_psnr, all_acc, steps, vae_out, all_vae_acc, all_vae_mse) 
             if step % args.log_every_n_steps == 0:
-                description = f'[e{epoch} s{step}/{len(train_loader)}], mse_loss:{all_losses/steps:.4f} PSNR:{all_psnr/steps:.2f} ACC {all_acc/steps:.4f} Ctx-mean:{float(context_params.mean()):.8f}'
-                if args.vae is not None:
-                    description += f' VAE-loss:{vae_loss_avg.avg:.4f}, Recon-loss:{recon_loss:.4f}, KLD-loss:{kld_loss:.4f}, VAE_mse_loss:{vae_mse:.4f}, VAE_ACC:{all_vae_acc/steps:.4f}'
-                    if args.vae_sample_decoder:
-                        description += f' VAE_latent_mse:{lmse:.4f}'
+                psnr = compute_psnr(gt['img'], vae_out['model_out'])
+                all_psnr.update(psnr)
+                pred_voxel = vae_out['model_out'] >= 0.0 # [non-exist (-1), exists (+1)]
+                gt_voxel = gt['img'] >= 0.0
+                acc = (pred_voxel == gt_voxel).float().mean()
+                all_vae_acc.update(acc.item())
+                all_mse.update(mse_loss)
+                description = f'[e{epoch} s{step}/{len(train_loader)}], vae_loss:{vae_loss_avg.avg:.4f}, recon_loss:{all_vae_recon.avg:.4f} kld_loss:{all_vae_kld.avg:.4f} mse_loss:{all_mse.avg} PSNR:{all_psnr.avg:.2f} ACC {all_vae_acc.avg:.4f}'
                 logger.info(description)
-                psnr = compute_psnr(model_output['model_out'].cpu() * 0.5 + 0.5, gt['img'].cpu() * 0.5 + 0.5)
                 if args.wandb:
-                    log_dict = {'outer_loss': (all_losses/steps), 'psnr': psnr,'global_step': global_steps, 'acc': all_acc/steps}
-                    if args.vae is not None:
-                        log_dict.update({'vae_loss': vae_loss_avg.avg, 'recon_loss': recon_loss, 'kld_loss': kld_loss, 'vae_mse_loss': vae_mse, 'vae_acc': all_vae_acc/steps})
-                        if args.vae_sample_decoder:
-                            log_dict.update({'vae_latent_mse': lmse})
+                    log_dict = {"vae_loss":vae_loss_avg.avg, 'recon_loss': all_vae_recon.avg, 'mse_loss':all_mse.avg,'psnr': all_psnr.avg, 'vae_acc': all_vae_acc.avg,'kld_loss': all_vae_kld.avg}
                     wandb.log(log_dict, step=global_steps)
             if step % args.save_every_n_steps == 0:
-                ind = model_output['model_out'][0]>=0
+                ind = vae_out['model_out'][0]>=0
                 im_show = model_input['coords'][0][ind.squeeze()]
                 plot_dict = {
-                    'Inr_out': im_show.detach().cpu().numpy(),
+                    'VAE_out': im_show.detach().cpu().numpy(),
                 }
-                if args.vae is not None:
-                    vae_ind = vae_out['model_out'][0]>=0
-                    vae_show = model_input['coords'][0][vae_ind.squeeze()]
-                    plot_dict.update(
-                        {'VAE_out': vae_show.detach().cpu().numpy()}
-                    )
                 plot_single_pcd(plot_dict, '{}/point_cloud_e{}s{}.png'.format(img_path,epoch, step))
-            vis_vae(args, vae_model, context_params, epoch, step, log_dir, global_steps)
             global_steps += 1
             
         inr_scheduler.step()

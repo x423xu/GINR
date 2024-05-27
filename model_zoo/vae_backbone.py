@@ -464,6 +464,7 @@ class LayerVAE(nn.Module):
             nn.Conv1d(in_channels=lcmp[0]*ldmp[0], out_channels=latent_channel, kernel_size=1, stride=1, padding=0, bias=True),
             Rearrange('b c l -> b l c', c = latent_channel)
         )
+        self.z0_size = [lcmp[1]*ldmp[1],sampler_dim//2] # L, 20
         # to generate prior z_1
         prior_ftr0_size = (lcmp[1]*ldmp[1],latent_channel) # should align with the siren latents' length
         self.prior_ftr0 = nn.Parameter(torch.rand(size=prior_ftr0_size), requires_grad=True)
@@ -515,7 +516,7 @@ class LayerVAE(nn.Module):
         all_log_q = [log_q]
 
         # s3. get the first prior
-        dist = Normal(torch.zeros_like(mu_q), torch.log(torch.tensor(self.prior_scale,device = mu_q.device)))
+        dist = Normal(torch.zeros_like(mu_q), torch.zeros_like(log_sigma_q)+torch.log(torch.tensor(self.prior_scale,device = mu_q.device)))
         log_p= dist.log_p(z) # (b, L, 20)
         all_p = [dist]
         all_log_p = [log_p]
@@ -590,3 +591,47 @@ class LayerVAE(nn.Module):
             return out_dist, kl_all, all_q, all_p, all_log_q, all_log_p
         
         return out_dist, kl_all, kl_diag, log_q, log_p
+    
+    def sample(self, num_samples, t=1.0):
+        z0_size = [num_samples]+self.z0_size
+        mu_0 = torch.zeros(z0_size)
+        log_sigma_0 = torch.zeros_like(mu_0)+torch.log(torch.tensor(self.prior_scale))
+        # log_sigma_0 = torch.zeros_like(mu_0)
+        dist = Normal(mu=mu_0, log_sigma=log_sigma_0, temp=t)
+        z, _ = dist.sample()
+        s = self.prior_ftr0.unsqueeze(0)
+        batch_size = z.size(0)
+        s = s.expand(batch_size, -1, -1)
+        s = s.cuda()
+        z = z.cuda()
+        s = self.dec_combiners[0](s, z)
+        s = self.decoder_tower[0](s)
+
+        for n in range(1,self.tower_length):  
+            # a1. get prior
+            param = self.dec_sampler[n-1](s)
+            mu_p, log_sigma_p = torch.chunk(param, 2, dim=2)
+            dist_p = Normal(mu_p, log_sigma_p, t)
+            z, _ = dist_p.sample()
+
+            # a3. combine posterior with prior features
+            s = self.dec_combiners[n](s, z)
+            s = self.decoder_tower[n](s)
+            if n==(self.tower_length-self.num_layers):
+                out_tensor=[s]
+            if n>(self.tower_length-self.num_layers):
+                out_tensor.append(s)
+
+        # the last combined s is sent to post_processor
+        out_tensor = torch.stack(out_tensor)
+        out_tensor = rearrange(out_tensor, 'n b l d -> (n b) l d', b=batch_size, n=self.num_layers)
+        out_tensor = self.post_processor(out_tensor)
+        out_tensor = rearrange(out_tensor, '(n b) l d -> b n l d', b=batch_size, n=self.num_layers)
+
+        # Sample decoder or not: True for a learned std, False for a prior std of 1
+        if self.sample_decoder:
+            z_mu, z_sigma = self.dist_embedding(out_tensor.squeeze(-1))
+            out_dist = Normal(z_mu, z_sigma)
+        else:
+            out_dist = out_tensor
+        return out_dist
